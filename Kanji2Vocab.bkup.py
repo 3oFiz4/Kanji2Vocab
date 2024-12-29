@@ -1,9 +1,6 @@
 import requests, pyperclip as copier
 from bs4 import BeautifulSoup
 import os, sys, json, re, time
-import threading
-from queue import Queue
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from rich.console import Console
 from rich.table import Table
 from rich import box
@@ -166,35 +163,31 @@ def scrape(Kanji, p):
     targetElementCharacter = p.select("div.concept_light-readings.japanese.japanese_gothic > div.concept_light-representation")
     targetElementMeaning = p.select("div.meanings-wrapper")
     targetElementTag = p.select("div.concept_light-status")
-    # This might be confusing. But what happen is that, for the scraper to determine whether the page is a complete null (as in there is no Vocabulary), the targetMeaningChar,Meaning,Tags and @isNextPagination is a sole determinator for next page continuation.
-    if isNextPagination or (targetElementCharacter, targetElementMeaning, targetElementTag):
-        for eTargetElementCharacter, eTargetElementMeaning, eTargetElementTag in zip(targetElementCharacter, targetElementMeaning, targetElementTag):
-            scrVocab = eTargetElementCharacter.select_one("span.text").get_text(strip=True) if eTargetElementCharacter.select_one("span.text") else None
-            scrFuri = eTargetElementCharacter.select_one("span.furigana").get_text(strip=True) if eTargetElementCharacter.select_one("span.furigana") else None
-            scrTags = eTargetElementTag.select(".concept_light-tag.label")
-            tagContents = []
-            totalScraped+=1
+    for eTargetElementCharacter, eTargetElementMeaning, eTargetElementTag in zip(targetElementCharacter, targetElementMeaning, targetElementTag):
+        scrVocab = eTargetElementCharacter.select_one("span.text").get_text(strip=True) if eTargetElementCharacter.select_one("span.text") else None
+        scrFuri = eTargetElementCharacter.select_one("span.furigana").get_text(strip=True) if eTargetElementCharacter.select_one("span.furigana") else None
+        scrTags = eTargetElementTag.select(".concept_light-tag.label")
+        tagContents = []
+        totalScraped+=1
 
-            if isVocab(scrVocab) and scrFuri:
-                for scrTag in scrTags:
-                    content = scrTag.get_text(strip=True) if scrTag else ''
-                    if content:
-                        tagContents.append(content)
+        if isVocab(scrVocab) and scrFuri:
+            for scrTag in scrTags:
+                content = scrTag.get_text(strip=True) if scrTag else ''
+                if content:
+                    tagContents.append(content)
 
-                # Join tag contents into a single string, if needed
-                Tag = shortifyTag(', '.join(tagContents)) if isTagShortened else ', '.join(tagContents)
-                Vocab = scrVocab
-                Furi = scrFuri
-                Meaning = shortifyMeaning(formatMeaning(eTargetElementMeaning)) if isMeaningShortened else formatMeaning(eTargetElementMeaning)
-                results.append({
-                    "Vocab": Vocab, 
-                    "Furi": Furi, 
-                    "Meaning": Meaning,
-                    "Tag": Tag})
-                
-        return results, isNextPagination, totalScraped
-    else:
-        return 0
+            # Join tag contents into a single string, if needed
+            Tag = shortifyTag(', '.join(tagContents)) if isTagShortened else ', '.join(tagContents)
+            Vocab = scrVocab
+            Furi = scrFuri
+            Meaning = shortifyMeaning(formatMeaning(eTargetElementMeaning)) if isMeaningShortened else formatMeaning(eTargetElementMeaning)
+            results.append({
+                "Vocab": Vocab, 
+                "Furi": Furi, 
+                "Meaning": Meaning,
+                "Tag": Tag})
+            
+    return results, isNextPagination, totalScraped
 
 # Had to create another utility function, to avoid messy code.
 def formatMeaning(html):
@@ -219,126 +212,30 @@ def formatMeaning(html):
     
     return formatted_meanings
 
-class paginationHandler:
-    # Handle pagination (Sequential)
-    def Sequential(Kanji, p):
-        """
-        Require $Kanji, $p(agination)
+# Handle pagination.
+def paginationHandler(Kanji, p):
+    """
+    Require $Kanji, $p(agination)
 
-        Used to handle $p for each kanji scraper
-        """
+    Used to handle $p for each kanji scraper
+    """
 
-        Pagination = Table()
-        Pagination.add_column("Pagination Step", justify="center", style="#00ffff bold")
-        Pagination.add_column("Total Scraped", justify="center", style="#ffffff bold")
-        Pagination.add_column("Next Pagination", justify="center", style="#00ff00 bold")
+    Pagination = Table()
+    Pagination.add_column("Pagination Step", justify="center", style="#00ffff bold")
+    Pagination.add_column("Total Scraped", justify="center", style="#ffffff bold")
+    Pagination.add_column("Next Pagination", justify="center", style="#00ff00 bold")
 
-        resultsMerge = []
-        with Live(Pagination, refresh_per_second=1):
-            for p in range(1, p):
-                results, isNextPagination, totalScraped = scrape(Kanji, p)
-                # Old Version VVV
-                # Log(f"Scraper at Pagination [{p}] Do next Pagination [{isNextPagination}]", '_')
-                Pagination.add_row(f"{p}", f"[green]{len(results)}[/]/[red]{totalScraped}[/]", f"{isNextPagination}")
-                resultsMerge.extend(results)
-                if not isNextPagination:
-                    break 
-        return resultsMerge
-
-    # Handle pagination (Concurrent Method)
-    def Concurrent(Kanji, p):
-        """
-        Require $Kanji, $p(agination)
-
-        Used to handle $p for each kanji scraper using multi-threading
-        In the prior version, this method was triggered sequentially, which took a long time.
-        With concurrent method, this is highly faster than before:
-
-        For 80V (out of 10P) target 人 it took ~17.729 seconds (Sequential Method)
-        For 87V (out of 10P) target 人 it took ~3.413 seconds (Concurrent Method)
-        """
-        Pagination = Table()
-        Pagination.add_column("Pagination Step", justify="center", style="#00ffff bold")
-        Pagination.add_column("Total Scraped", justify="center", style="#ffffff bold")
-        Pagination.add_column("Next Pagination", justify="center", style="#00ff00 bold")
-
-        # Thread-safe queue to store results
-        result_queue = Queue()
-        stop_event = threading.Event()
-        max_page = threading.Event()
-        
-        # Use a thread-safe list to store max page number
-        from multiprocessing import Value
-        max_page_num = Value('i', p)
-
-        def scrape_page(page_num):
-            if stop_event.is_set() and page_num > max_page_num.value:
-                return None
-            
-            scrape_result = scrape(Kanji, page_num)
-            
-            # Handle case where scrape returns an int (0)
-            if isinstance(scrape_result, int):
-                results, isNextPagination, totalScraped = [], False, scrape_result
-            else:
-                results, isNextPagination, totalScraped = scrape_result
-
-            # If no next pagination, update max page number
-            if not isNextPagination:
-                with max_page_num.get_lock():
-                    max_page_num.value = min(max_page_num.value, page_num)
-                max_page.set()
-
-            return {
-                'page': page_num,
-                'results': results,
-                'isNextPagination': isNextPagination,
-                'totalScraped': totalScraped
-            }
-
-        resultsMerge = []
-        page_results = []  # Store results with page numbers for sorting
-        
-        with Live(Pagination, refresh_per_second=1):
-            with ThreadPoolExecutor(max_workers=p) as executor:
-                # Submit initial batch of tasks
-                future_to_page = {
-                    executor.submit(scrape_page, page_num): page_num 
-                    for page_num in range(1, p+1)
-                }
-
-                # Process results as they complete
-                for future in as_completed(future_to_page):
-                    page_result = future.result()
-                    if page_result is None:
-                        continue
-
-                    page = page_result['page']
-                    results = page_result['results']
-                    isNextPagination = page_result['isNextPagination']
-                    totalScraped = page_result['totalScraped']
-
-                    if page <= max_page_num.value:  # Only process results up to max page
-                        Pagination.add_row(
-                            f"{page}", 
-                            f"[green]{len(results)}[/]/[red]{totalScraped}[/]", 
-                            f"{isNextPagination}"
-                        )
-                        
-                        # Store results accordingly with page number
-                        page_results.append((page, results))
-                    
-                    # If no next pagination, set stop event
-                    if not isNextPagination:
-                        stop_event.set()
-                        print(f"Full Stop at pagination {page}")
-
-        # Sort results by page number and merge
-        page_results.sort(key=lambda x: x[0])  # Sort by page number
-        for _, results in page_results:
+    resultsMerge = []
+    with Live(Pagination, refresh_per_second=1):
+        for p in range(1, p):
+            results, isNextPagination, totalScraped = scrape(Kanji, p)
+            # Old Version VVV
+            # Log(f"Scraper at Pagination [{p}] Do next Pagination [{isNextPagination}]", '_')
+            Pagination.add_row(f"{p}", f"[green]{len(results)}[/]/[red]{totalScraped}[/]", f"{isNextPagination}")
             resultsMerge.extend(results)
-
-        return resultsMerge
+            if not isNextPagination:
+                break 
+    return resultsMerge
 
 def run(Kanji, limit=10):
     """
@@ -349,13 +246,8 @@ def run(Kanji, limit=10):
     # setup_console() # Fix smoe CMD unable to represent the japanese character.
     
     # List of Vocabs with limit
+    Scraper = paginationHandler(Kanji, limit)  # passing limit to paginationHandler
     
-    timeStartScraper = time.time()
-    Scraper = paginationHandler.Concurrent(Kanji, limit)  # passing limit to paginationHandler
-    timeEndScraper = time.time()
-
-    scraperTimeElapsed = timeEndScraper - timeStartScraper
-
     if not Scraper:
         Log("Nil.", "f")
         return
@@ -379,7 +271,7 @@ def run(Kanji, limit=10):
         start_idx = current_page * paginationLimit
         end_idx = min(start_idx + paginationLimit, total_items)
         
-        scrapedVocabularyTable = Table(caption=f"Scraped Vocabulary\nPage {current_page + 1} of {total_pages}\nItems {current_page * paginationLimit + 1}-{min((current_page + 1) * paginationLimit, total_items)} of {total_items}\nTime Taken: {scraperTimeElapsed}", show_lines=True)
+        scrapedVocabularyTable = Table(caption=f"Scraped Vocabulary\nPage {current_page + 1} of {total_pages}\nItems {current_page * paginationLimit + 1}-{min((current_page + 1) * paginationLimit, total_items)} of {total_items}", show_lines=True)
 
         scrapedVocabularyTable.add_column("Vocab", justify="center", style="cyan bold")
         scrapedVocabularyTable.add_column("Furigana", style="#00ffff i")
