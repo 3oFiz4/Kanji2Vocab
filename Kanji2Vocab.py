@@ -357,7 +357,7 @@ class paginationHandler:
 
         return resultsMerge
 
-def run(Kanji, limit=10):
+def run(Kanji, limit=10, method="c"):
     """
     Require $Kanji, *limit
 
@@ -368,7 +368,8 @@ def run(Kanji, limit=10):
     # List of Vocabs with limit
     
     timeStartScraper = time.time()
-    Scraper = paginationHandler.Concurrent(Kanji, limit)  # passing limit to paginationHandler
+    if method == "c": Scraper = paginationHandler.Concurrent(Kanji, limit)  # passing limit to paginationHandler
+    elif method == "s": Scraper = paginationHandler.Sequential(Kanji, limit)  # passing limit to paginationHandler
     timeEndScraper = time.time()
 
     scraperTimeElapsed = timeEndScraper - timeStartScraper
@@ -449,6 +450,7 @@ def run(Kanji, limit=10):
 
 def main():
     global BaseUrl, Kanji
+    # a1 = Kanji, a2 = Total Pagination, a3 = Method
     if len(sys.argv) == 2:
         args1 = sys.argv[1]
         BaseUrl = config['BaseUrl'].format(Kanji=args1)
@@ -458,6 +460,12 @@ def main():
         args2 = sys.argv[2]
         BaseUrl = config['BaseUrl'].format(Kanji=args1)
         run(args1, int(args2))
+    elif len(sys.argv) == 4:
+        args1 = sys.argv[1]
+        args2 = sys.argv[2]
+        args3 = sys.argv[3]
+        BaseUrl = config['BaseUrl'].format(Kanji=args1)
+        run(args1, int(args2), args3)
     else:
         Kanji = inputKanji()
         BaseUrl = config['BaseUrl'].format(Kanji=Kanji)

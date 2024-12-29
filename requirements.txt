@@ -1,1 +1,1 @@
-beautifulsoup4, requests, rich, pyperclip
+beautifulsoup4, requests, rich, pyperclip, lxml
