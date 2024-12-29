@@ -142,56 +142,73 @@ def scrape(Kanji, p):
 
     Used to scrape one-by-one per $p of each target $Kanji, collecting below: 
     - Vocabulary
-    - Furigana
+    - Furigana 
     - Meaning (shortened)
     - Tag (shortened)
     """
-    r = requests.get(BaseUrl+f'?page={p}')
-    if r.status_code != 200:
-        Log(f"Failure.\nCode: {r.status_code}", "f")
-        return []
+    # Session for connection pooling
+    session = requests.Session()
     
-    p = BeautifulSoup(r.content, 'html.parser')
+    # Add timeout and headers for better reliability
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    
+    try:
+        r = session.get(BaseUrl+f'?page={p}', headers=headers, timeout=10)
+        r.raise_for_status()
+    except requests.RequestException as e:
+        Log(f"Failure.\nError: {str(e)}", "f")
+        return []
+
+    p = BeautifulSoup(r.content, 'lxml')  # lxml parser for better performance
 
     results = []
-    
     totalScraped = 0
 
-    # Check if "More Words" exist, if no, do not continue to next page, therefore break.
+    # Check if "More Words" exist
     isNextPagination = bool(p.select_one('a.more'))
-    # Return True if the element exists, otherwise False
 
-    # Find all elements matching the structure
-    # OK
+    # Use CSS selectors to get all elements at once
     targetElementCharacter = p.select("div.concept_light-readings.japanese.japanese_gothic > div.concept_light-representation")
-    targetElementMeaning = p.select("div.meanings-wrapper")
+    targetElementMeaning = p.select("div.meanings-wrapper") 
     targetElementTag = p.select("div.concept_light-status")
-    # This might be confusing. But what happen is that, for the scraper to determine whether the page is a complete null (as in there is no Vocabulary), the targetMeaningChar,Meaning,Tags and @isNextPagination is a sole determinator for next page continuation.
+
     if isNextPagination or (targetElementCharacter, targetElementMeaning, targetElementTag):
+        # Pre-compile regex patterns for better performance
+        text_pattern = "span.text"
+        furigana_pattern = "span.furigana"
+        tag_pattern = ".concept_light-tag.label"
+        
         for eTargetElementCharacter, eTargetElementMeaning, eTargetElementTag in zip(targetElementCharacter, targetElementMeaning, targetElementTag):
-            scrVocab = eTargetElementCharacter.select_one("span.text").get_text(strip=True) if eTargetElementCharacter.select_one("span.text") else None
-            scrFuri = eTargetElementCharacter.select_one("span.furigana").get_text(strip=True) if eTargetElementCharacter.select_one("span.furigana") else None
-            scrTags = eTargetElementTag.select(".concept_light-tag.label")
-            tagContents = []
-            totalScraped+=1
+            # Cache selector results
+            text_elem = eTargetElementCharacter.select_one(text_pattern)
+            furigana_elem = eTargetElementCharacter.select_one(furigana_pattern)
+            
+            scrVocab = text_elem.get_text(strip=True) if text_elem else None
+            scrFuri = furigana_elem.get_text(strip=True) if furigana_elem else None
+            scrTags = eTargetElementTag.select(tag_pattern)
+            
+            totalScraped += 1
 
             if isVocab(scrVocab) and scrFuri:
-                for scrTag in scrTags:
-                    content = scrTag.get_text(strip=True) if scrTag else ''
-                    if content:
-                        tagContents.append(content)
+                # Build tag contents list more efficiently
+                tagContents = [tag.get_text(strip=True) for tag in scrTags if tag]
+                tagContents = [content for content in tagContents if content]
 
-                # Join tag contents into a single string, if needed
+                # Join tag contents into a single string
                 Tag = shortifyTag(', '.join(tagContents)) if isTagShortened else ', '.join(tagContents)
-                Vocab = scrVocab
-                Furi = scrFuri
-                Meaning = shortifyMeaning(formatMeaning(eTargetElementMeaning)) if isMeaningShortened else formatMeaning(eTargetElementMeaning)
-                results.append({
-                    "Vocab": Vocab, 
-                    "Furi": Furi, 
-                    "Meaning": Meaning,
-                    "Tag": Tag})
                 
+                # Process meaning
+                Meaning = shortifyMeaning(formatMeaning(eTargetElementMeaning)) if isMeaningShortened else formatMeaning(eTargetElementMeaning)
+                
+                results.append({
+                    "Vocab": scrVocab,
+                    "Furi": scrFuri,
+                    "Meaning": Meaning,
+                    "Tag": Tag
+                })
+
         return results, isNextPagination, totalScraped
     else:
         return 0
