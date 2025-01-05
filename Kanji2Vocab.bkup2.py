@@ -1,13 +1,9 @@
 import requests, pyperclip as copier
 from bs4 import BeautifulSoup
-import sys
-import json 
-import re
-import time
+import os, sys, json, re, time
 import threading
 from queue import Queue
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from multiprocessing import Value
 from rich.console import Console
 from rich.table import Table
 from rich import box
@@ -23,13 +19,15 @@ O. Add a Shortener for the formatted meaning (e.g. Suru verb => (suru), Na-Adjec
 5. Add a Hiragana-Katakana converter if a certain Vocabulary are confirmed as by their Onyomi
 6. Add an extended configuration, editable Template, editable hasLearned
 7. Add a CMD GUI (ex. below)
-
+```
+---
 Kanji2Vocab
 1. Search Vocab (type. 1[KANJI], ex: 1何)
 2. Modify configuration
 3. Credit 
 4. Exit
-
+---
+```
 8. Add a system when a certain meaning has an example.
 V. Improve Pagination system so instead of `NTH. [VOCAB] ([FURIGANA])\n=>[MEANING]` it has a table generated (Clue: Use Rich).
 V. Show more logs, such as (total vocabs scraped per page)
@@ -45,13 +43,11 @@ Kanji = ''
 BaseUrl = ''
 hasLearned = list(config['hasLearned'])
 Template = config['Template']
-TemplateKanji = config['TemplateKanji']
 isTemplate = config['isTemplate']
 isTagShortened = config['isTagShortened']
 isMeaningShortened = config['isMeaningShortened']
 PaginationLimit = config['PaginationLimit']
 # ----------------- P R O G R A M --------------------------------------
-kanji_scraped = None
 def inputKanji():
     while True:
         type = Console()
@@ -140,29 +136,7 @@ def shortifyMeaning(Meaning):
     
     return Meaning
 
-def toOnyomi(value, kanji):
-        '''
-        Convert only matching onyomi parts from hiragana to katakana
-        For example: にんげん -> ニンげん (because にん matches the onyomi ニン)
-        '''
-        # Clean up onyomi readings - remove 'On:' prefix and get clean list
-        onyomi_list = [reading.replace('On:', '').strip() for reading in kanji['Onyomi'].split('、')]
-        
-        result = value
-        for onyomi in onyomi_list:
-            # Convert onyomi to hiragana for comparison
-            onyomi_hiragana = ''.join(
-                chr(ord(char) - 0x60) if 'ァ' <= char <= 'ヶ' else char 
-                for char in onyomi
-            )
-            
-            # If this onyomi reading exists in hiragana form, replace it with katakana
-            if onyomi_hiragana in result:
-                result = result.replace(onyomi_hiragana, onyomi)
-        
-        return result
-
-def scrape(Kanji, pnth):
+def scrape(Kanji, p):
     """
     Require $Kanji, $p(agination)
 
@@ -172,7 +146,6 @@ def scrape(Kanji, pnth):
     - Meaning (shortened)
     - Tag (shortened)
     """
-    global kanji_scraped
     # Session for connection pooling
     session = requests.Session()
     
@@ -182,7 +155,7 @@ def scrape(Kanji, pnth):
     }
     
     try:
-        r = session.get(BaseUrl+f'?page={pnth}', headers=headers, timeout=10)
+        r = session.get(BaseUrl+f'?page={p}', headers=headers, timeout=10)
         r.raise_for_status()
     except requests.RequestException as e:
         Log(f"Failure.\nError: {str(e)}", "f")
@@ -196,54 +169,17 @@ def scrape(Kanji, pnth):
     # Check if "More Words" exist
     isNextPagination = bool(p.select_one('a.more'))
 
-    # CSS selectors to get all elements at once
+    # Use CSS selectors to get all elements at once
     targetElementCharacter = p.select("div.concept_light-readings.japanese.japanese_gothic > div.concept_light-representation")
     targetElementMeaning = p.select("div.meanings-wrapper") 
     targetElementTag = p.select("div.concept_light-status")
 
     if isNextPagination or (targetElementCharacter, targetElementMeaning, targetElementTag):
-        # Regex patterns
+        # Pre-compile regex patterns for better performance
         text_pattern = "span.text"
         furigana_pattern = "span.furigana"
         tag_pattern = ".concept_light-tag.label"
-
-        if pnth == 1: # It is only available at first page.
-            targetElementKanji = p.select_one("div.kanji_light_content")
-            # Regex patterns (Kanji Only)
-            kanji_onyomi_pattern = "div.on.readings" # This only returns the div header
-            kanji_kunyomi_pattern = "div.kun.readings" # This only returns the div header
-            kanji_meaning_pattern = "div.meanings.english.sense" # This only returns the div header
-            kanji_info_pattern = "div.info.clearfix" # This only returns the div header
-
-            # Kanji Element (they're accessed only one time, when a second loop happen *in the sense of page is non-default*, this process are ignored.)
-            scrKanjiOnyomi = targetElementKanji.select_one(kanji_onyomi_pattern)
-            scrKanjiKunyomi = targetElementKanji.select_one(kanji_kunyomi_pattern)
-            scrKanjiMeaning = targetElementKanji.select_one(kanji_meaning_pattern)
-            scrKanjiInfo = targetElementKanji.select_one(kanji_info_pattern)
-
-            if scrKanjiOnyomi and scrKanjiKunyomi:
-                # Unwrap all <a> tags within Onyomi and Kunyomi only
-                for onyomi, kunyomi in zip(scrKanjiOnyomi.find_all("a", recursive=True), scrKanjiKunyomi.find_all("a", recursive=True)):
-                    onyomi.unwrap()
-                    kunyomi.unwrap()
-                kanjiOnyomi = scrKanjiOnyomi.get_text(strip=True, separator="")
-                kanjiKunyomi = scrKanjiKunyomi.get_text(strip=True, separator="")
-            else:
-                kanjiOnyomi = ""
-                kanjiKunyomi = ""
-
-            kanjiMeaning = scrKanjiMeaning.get_text(strip=True, separator="") if scrKanjiMeaning else ""
-            kanjiInfo = scrKanjiInfo.get_text(strip=True, separator="") if scrKanjiInfo else ""
-
-            kanji = {
-                "Info": kanjiInfo,
-                "Onyomi": kanjiOnyomi,
-                "Kunyomi": kanjiKunyomi,
-                "Meaning": kanjiMeaning
-            }
-            # Save the retrieved kanji into the global kanji_scraped
-            kanji_scraped = kanji
-
+        
         for eTargetElementCharacter, eTargetElementMeaning, eTargetElementTag in zip(targetElementCharacter, targetElementMeaning, targetElementTag):
             # Cache selector results
             text_elem = eTargetElementCharacter.select_one(text_pattern)
@@ -268,15 +204,14 @@ def scrape(Kanji, pnth):
                 
                 results.append({
                     "Vocab": scrVocab,
-                    "Furi": toOnyomi(scrFuri,kanji_scraped),
+                    "Furi": scrFuri,
                     "Meaning": Meaning,
                     "Tag": Tag
                 })
 
         return results, isNextPagination, totalScraped
-    # Whenever you modify the return above, you should check out for PaginationHandler class and see both two methods, that handles these.
     else:
-        return [], False, 0
+        return 0
 
 # Had to create another utility function, to avoid messy code.
 def formatMeaning(html):
@@ -317,23 +252,17 @@ class paginationHandler:
 
         resultsMerge = []
         with Live(Pagination, refresh_per_second=1):
-            for page in range(1, p):
-                results, isNextPagination, totalScraped = scrape(Kanji, page)
-                if kanji_scraped and page == 1:
-                    Log(f"""Target Kanji: {Kanji}
-Onyomi: {kanji_scraped['Onyomi']}
-Kunyomi: {kanji_scraped['Kunyomi']}
-Meaning: {kanji_scraped['Meaning']}
-Info: {kanji_scraped['Info']}
-                        """)
-
-                Pagination.add_row(f"{page}", f"[green]{len(results)}[/]/[red]{totalScraped}[/]", f"{isNextPagination}")
+            for p in range(1, p):
+                results, isNextPagination, totalScraped = scrape(Kanji, p)
+                # Old Version VVV
+                # Log(f"Scraper at Pagination [{p}] Do next Pagination [{isNextPagination}]", '_')
+                Pagination.add_row(f"{p}", f"[green]{len(results)}[/]/[red]{totalScraped}[/]", f"{isNextPagination}")
                 resultsMerge.extend(results)
                 if not isNextPagination:
                     break 
         return resultsMerge
 
-    # Handle pagination (Concurrent Method) * Still Broken: Do not Use*
+    # Handle pagination (Concurrent Method)
     def Concurrent(Kanji, p):
         """
         Require $Kanji, $p(agination)
@@ -356,13 +285,20 @@ Info: {kanji_scraped['Info']}
         max_page = threading.Event()
         
         # Use a thread-safe list to store max page number
+        from multiprocessing import Value
         max_page_num = Value('i', p)
 
         def scrape_page(page_num):
             if stop_event.is_set() and page_num > max_page_num.value:
                 return None
             
-            results, isNextPagination, totalScraped = scrape(Kanji, page_num)
+            scrape_result = scrape(Kanji, page_num)
+            
+            # Handle case where scrape returns an int (0)
+            if isinstance(scrape_result, int):
+                results, isNextPagination, totalScraped = [], False, scrape_result
+            else:
+                results, isNextPagination, totalScraped = scrape_result
 
             # If no next pagination, update max page number
             if not isNextPagination:
@@ -379,6 +315,7 @@ Info: {kanji_scraped['Info']}
 
         resultsMerge = []
         page_results = []  # Store results with page numbers for sorting
+        
         with Live(Pagination, refresh_per_second=1):
             with ThreadPoolExecutor(max_workers=p) as executor:
                 # Submit initial batch of tasks
@@ -411,7 +348,7 @@ Info: {kanji_scraped['Info']}
                     # If no next pagination, set stop event
                     if not isNextPagination:
                         stop_event.set()
-                        # print(f"Full Stop at pagination {page}")
+                        print(f"Full Stop at pagination {page}")
 
         # Sort results by page number and merge
         page_results.sort(key=lambda x: x[0])  # Sort by page number
@@ -481,12 +418,6 @@ def run(Kanji, limit=10, method="c"):
         # Navigation and copy instructions
         Log("\nNavigation: < (previous) | > (next) | _ (exit)")
         Log("To copy a vocabulary item, enter its number")
-        Log(f"""Target Kanji: {Kanji}
-Onyomi: {kanji_scraped['Onyomi']}
-Kunyomi: {kanji_scraped['Kunyomi']}
-Meaning: {kanji_scraped['Meaning']}
-Info: {kanji_scraped['Info']}
-                        """)
         command = input("Enter command or number: ").strip()
         
         if command == "<":
@@ -503,27 +434,19 @@ Info: {kanji_scraped['Info']}
                     KANJI=Kanji, 
                     VOCAB=r"{{c1::"+eVocab['Vocab']+r"}}",
                     MEANING=r"{{c2::"+str(r"<br>".join(eVocab['Meaning']))+r"}}",
-                    FURIGANA=r"{{c3::"+str(eVocab['Furi'])+r"}}",
-                    TAG=eVocab['Tag']
+                    FURIGANA=r"{{c3::"+str(eVocab['Furi'])+r"}}"
                 )
                 # Copy to clipboard
                 copier.copy(formatted_template)
+                print("\nTemplate copied to clipboard:")
                 Log("Recorded to clipboard", "s")
+                input("Enter to continue...")
             else:
                 Log("Invalid number. Enter a valid vocabulary number.", "c")
-        elif command == "k" or command == "kanji":
-            formatted_template = TemplateKanji.format(
-                    KANJI=Kanji, 
-                    MEANING=kanji_scraped['Meaning'],
-                    ONYOMI=" "+kanji_scraped['Onyomi'][3:],
-                    KUNYOMI=" "+kanji_scraped['Kunyomi'][4:],
-                    INFO=kanji_scraped['Info']
-                )
-                # Copy to clipboard
-            copier.copy(formatted_template)
-            Log("Recorded to clipboard", "s")
+                input("Enter to continue...")
         else:
             Log("Use <, >, _ to navigate or enter a number", "c")
+            input("Enter to continue...")
 
 def main():
     global BaseUrl, Kanji
