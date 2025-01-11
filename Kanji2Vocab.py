@@ -37,12 +37,14 @@ V. Show more logs, such as (total vocabs scraped per page)
 12. Improve Scrapper (optional)
 13. Add an API integration with an AI Chatbot to automatically creates a Spoiler, and contextual usage of a vocabulary (optional)
 14. Add stroke drawing (optional)
+
+Minor fixes
 '''
 
 with open('config.json', 'r', encoding='utf-8') as f:
     config = json.load(f)
 Kanji = ''
-BaseUrl = ''
+BaseUrl = config['BaseUrl']
 hasLearned = list(config['hasLearned'])
 Template = config['Template']
 TemplateKanji = config['TemplateKanji']
@@ -89,9 +91,11 @@ def isVocab(scrVocab):
     1. Each Character must have Kanji or Hiragana 
     2. Each Character must have any character one or more in $hasLearned
     """
-    if Kanji not in scrVocab:return False
+    if Kanji not in scrVocab:
+        return False
     for eChar in scrVocab:
-        if eChar != Kanji and eChar not in hasLearned: return False 
+        if eChar != Kanji and eChar not in hasLearned: 
+            return False 
     return True, scrVocab
 
 def shortifyTag(Tag):
@@ -182,7 +186,7 @@ def scrape(Kanji, pnth):
     }
     
     try:
-        r = session.get(BaseUrl+f'?page={pnth}', headers=headers, timeout=10)
+        r = requests.get(BaseUrl+f'?page={pnth}')
         r.raise_for_status()
     except requests.RequestException as e:
         Log(f"Failure.\nError: {str(e)}", "f")
@@ -221,13 +225,26 @@ def scrape(Kanji, pnth):
             scrKanjiMeaning = targetElementKanji.select_one(kanji_meaning_pattern)
             scrKanjiInfo = targetElementKanji.select_one(kanji_info_pattern)
 
+            # If one of them or both exist.
             if scrKanjiOnyomi and scrKanjiKunyomi:
-                # Unwrap all <a> tags within Onyomi and Kunyomi only
+                # Unwrap all <a> tags within Onyomi and Kunyomi
                 for onyomi, kunyomi in zip(scrKanjiOnyomi.find_all("a", recursive=True), scrKanjiKunyomi.find_all("a", recursive=True)):
                     onyomi.unwrap()
                     kunyomi.unwrap()
                 kanjiOnyomi = scrKanjiOnyomi.get_text(strip=True, separator="")
                 kanjiKunyomi = scrKanjiKunyomi.get_text(strip=True, separator="")
+            elif scrKanjiOnyomi:
+                # Unwrap all <a> tags within Onyomi
+                for onyomi in scrKanjiOnyomi.find_all("a", recursive=True):
+                    onyomi.unwrap()
+                kanjiOnyomi = scrKanjiOnyomi.get_text(strip=True, separator="")
+                kanjiKunyomi = ""
+            elif scrKanjiKunyomi:
+                # Unwrap all <a> tags within Kunyomi
+                for kunyomi in scrKanjiKunyomi.find_all("a", recursive=True):
+                    kunyomi.unwrap()
+                kanjiKunyomi = scrKanjiKunyomi.get_text(strip=True, separator="")
+                kanjiOnyomi = ""
             else:
                 kanjiOnyomi = ""
                 kanjiKunyomi = ""
@@ -252,10 +269,11 @@ def scrape(Kanji, pnth):
             scrVocab = text_elem.get_text(strip=True) if text_elem else None
             scrFuri = furigana_elem.get_text(strip=True) if furigana_elem else None
             scrTags = eTargetElementTag.select(tag_pattern)
-            
+            # Log(f"{eTargetElementCharacter},{eTargetElementMeaning},{eTargetElementTag}")
             totalScraped += 1
 
             if isVocab(scrVocab) and scrFuri:
+                
                 # Build tag contents list more efficiently
                 tagContents = [tag.get_text(strip=True) for tag in scrTags if tag]
                 tagContents = [content for content in tagContents if content]
@@ -321,8 +339,8 @@ class paginationHandler:
                 results, isNextPagination, totalScraped = scrape(Kanji, page)
                 if kanji_scraped and page == 1:
                     Log(f"""Target Kanji: {Kanji}
-Onyomi: {kanji_scraped['Onyomi']}
-Kunyomi: {kanji_scraped['Kunyomi']}
+{kanji_scraped['Onyomi']}
+{kanji_scraped['Kunyomi']}
 Meaning: {kanji_scraped['Meaning']}
 Info: {kanji_scraped['Info']}
                         """)
@@ -420,7 +438,7 @@ Info: {kanji_scraped['Info']}
 
         return resultsMerge
 
-def run(Kanji, limit=10, method="c"):
+def run(Kanji, limit=20, method="s"):
     """
     Require $Kanji, *limit
 
@@ -530,15 +548,18 @@ def main():
     # a1 = Kanji, a2 = Total Pagination, a3 = Method
     if len(sys.argv) == 2:
         args1 = sys.argv[1]
+        Kanji = args1
         BaseUrl = config['BaseUrl'].format(Kanji=args1)
         run(args1, 20)
     elif len(sys.argv) == 3:
         args1 = sys.argv[1]
+        Kanji = args1
         args2 = sys.argv[2]
         BaseUrl = config['BaseUrl'].format(Kanji=args1)
         run(args1, int(args2))
     elif len(sys.argv) == 4:
         args1 = sys.argv[1]
+        Kanji = args1
         args2 = sys.argv[2]
         args3 = sys.argv[3]
         BaseUrl = config['BaseUrl'].format(Kanji=args1)
