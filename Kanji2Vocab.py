@@ -38,7 +38,11 @@ V. Show more logs, such as (total vocabs scraped per page)
 13. Add an API integration with an AI Chatbot to automatically creates a Spoiler, and contextual usage of a vocabulary (optional)
 14. Add stroke drawing (optional)
 
-Minor fixes
+Minor fixes:
+Do not forget to do:
+1. git add .
+2. git commit -m "comit msg"
+3. git push origin main 
 '''
 
 with open('config.json', 'r', encoding='utf-8') as f:
