@@ -10,9 +10,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from multiprocessing import Value
 from rich.console import Console
 from rich.table import Table
-from rich import box
 from rich.live import Live
 from rich import print as color_print
+from threading import Lock
+import concurrent.futures
+import random
 
 '''
 To-Do:
@@ -20,9 +22,9 @@ V. Add a Tag for each Vocabulary in Pagination (e.g. N5, N4, N3, WN29, WN29-20, 
 O. Add a Shortener for the formatted meaning (e.g. Suru verb => (suru), Na-Adjective => (な), Adverb => (ADV))
 3. Add a search system in Pagination, that able to search meaning, furigana, kanji, or even tags
 4. Add a filter system that filters the tag
-5. Add a Hiragana-Katakana converter if a certain Vocabulary are confirmed as by their Onyomi
-6. Add an extended configuration, editable Template, editable hasLearned
-7. Add a CMD GUI (ex. below)
+V. Add a Hiragana-Katakana converter if a certain Vocabulary are confirmed as by their Onyomi
+O. Add an extended configuration, editable Template, editable hasLearned
+V. Add a CMD GUI (ex. below)
 
 Kanji2Vocab
 1. Search Vocab (type. 1[KANJI], ex: 1何)
@@ -34,7 +36,7 @@ Kanji2Vocab
 V. Improve Pagination system so instead of `NTH. [VOCAB] ([FURIGANA])\n=>[MEANING]` it has a table generated (Clue: Use Rich).
 V. Show more logs, such as (total vocabs scraped per page)
 11. Make code more readable and less messy :)
-12. Improve Scrapper (optional)
+V. Improve Scrapper (optional) = Modified to use LXML, scrape Kanji also, i guess thats an improvement XD
 13. Add an API integration with an AI Chatbot to automatically creates a Spoiler, and contextual usage of a vocabulary (optional)
 14. Add stroke drawing (optional)
 
@@ -185,12 +187,19 @@ def scrape(Kanji, pnth):
     session = requests.Session()
     
     # Add timeout and headers for better reliability
+    user_agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.82 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.150 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.141 Safari/537.36'
+    ]
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': random.choice(user_agents)
     }
     
     try:
-        r = requests.get(BaseUrl+f'?page={pnth}')
+        r = requests.get(BaseUrl+f'?page={pnth}', headers=headers)
         r.raise_for_status()
     except requests.RequestException as e:
         Log(f"Failure.\nError: {str(e)}", "f")
@@ -355,8 +364,114 @@ Info: {kanji_scraped['Info']}
                     break 
         return resultsMerge
 
-    # Handle pagination (Concurrent Method) * Still Broken: Do not Use*
-    def Concurrent(Kanji, p):
+    # Handle pagination (Concurrent)
+    def Concurrent(Kanji, p, max_workers=10):
+        """
+        Require $Kanji, $p(agination)
+
+        Used to handle $p for each kanji scraper using multi-threading and retries if a certain page returns timeout.
+        In the prior version, this method was triggered sequentially, which took a long time.
+        With concurrent method, this is highly faster than before:
+
+        For 80V (out of 10P) target 人 it took ~17.729 seconds (Sequential Method)
+        For 87V (out of 10P) target 人 it took ~3.413 seconds (Concurrent Method)
+
+        Thanks to ChatGPT for the retry idea: When I wrote this function, I was stuck on thinking... How may I avoid persistent timeout? Then ChatGPT goes, here fam.
+        """
+        
+        Pagination = Table()
+        Pagination.add_column("Pagination Step", justify="center", style="#00ffff bold")
+        Pagination.add_column("Total Scraped", justify="center", style="#ffffff bold")
+        Pagination.add_column("Next Pagination", justify="center", style="#00ff00 bold")
+
+        # Thread-safe
+        lock = Lock()
+
+        resultsMerge = []
+        stop_event = threading.Event()
+
+        def scrape_page(page, retries=3, backoff_factor=1):
+            """
+            Wrapper for the scrape function to handle each page with retries.
+
+            Thanks to ChatGPT for the retry idea: When I wrote this function, I was stuck on thinking... How may I avoid persistent timeout? Then ChatGPT goes, here fam.
+            """
+            for attempt in range(retries):
+                try:
+                    results, isNextPagination, totalScraped = scrape(Kanji, page)
+                    return (page, results, isNextPagination, totalScraped)
+                except Exception as e:
+                    if attempt < retries - 1:
+                        time.sleep(backoff_factor * (2 ** attempt))  # Exponential backoff, Credit:ChatGPT.
+                    else:
+                        return (page, None, None, f"Timeout after {retries} attempts!")
+
+        with Live(Pagination, refresh_per_second=2):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Futures thread for each page
+                future_to_page = {executor.submit(scrape_page, page): page for page in range(1, p + 1)}
+
+                for future in concurrent.futures.as_completed(future_to_page):
+                    page = future_to_page[future]
+                    try:
+                        result = future.result()
+                        if result is None:
+                            continue  # If after many tries, page is still Timeout, then skip.
+                        page_num, results, isNextPagination, totalScraped = result
+
+                        # Acquire lock and update shared resources
+                        with lock:
+                            if results is not None:
+                                # Update the table
+                                Pagination.add_row(
+                                    str(page_num),
+                                    f"[green]{len(results)}[/]/[red]{totalScraped}[/]",
+                                    "Yes" if isNextPagination else "No"
+                                )
+
+                                resultsMerge.extend(results)
+
+                                # If there is no next pagination, set the stop_event
+                                if not isNextPagination:
+                                    stop_event.set()
+                                    # For any remaining futures, is cancelled
+                                    for future in future_to_page:
+                                        future.cancel()
+                            else:
+                                # Update the table ONLY if return NULL
+                                Pagination.add_row(
+                                    str(page_num),
+                                    f"[red]Timeout![/]",
+                                    "Yes" if isNextPagination else "No"
+                                )
+                    except Exception as exc:
+                        with lock:
+                            Pagination.add_row(
+                                str(page_num),
+                                f"[red]Timeout![/]",
+                                "Yes" if isNextPagination else "No"
+                            )
+                            stop_event.set()
+                            # For any remaining futures, is cancelled
+                            for future in future_to_page:
+                                future.cancel()
+
+        # Make sure all pages up to the last successful page are scraped
+        # There is a bug where a certain number are succesfully scraped, but the number below are unsuccesfully scraped.
+        last_page = max(future_to_page.values())
+        for page in range(1, last_page + 1):
+            if page not in [future_to_page[future] for future in future_to_page if future.done()]:
+                # Retry fn:scrape() for missing pages.
+                result = scrape_page(page)
+                if result:
+                    page_num, results, isNextPagination, totalScraped = result
+                    if results is not None:
+                        resultsMerge.extend(results)
+
+        return resultsMerge
+
+    # BROKEN: Handle pagination (Concurrent Method) *This is an old version of fn:Concurrent that I left here.*
+    def OldConcurrent(Kanji, p):
         """
         Require $Kanji, $p(agination)
 
@@ -551,10 +666,100 @@ def main():
     global BaseUrl, Kanji
     # a1 = Kanji, a2 = Total Pagination, a3 = Method
     if len(sys.argv) == 2:
-        args1 = sys.argv[1]
-        Kanji = args1
-        BaseUrl = config['BaseUrl'].format(Kanji=args1)
-        run(args1, 20)
+        if sys.argv[1] == "-c" or sys.argv[1] == "--config":
+            with open('config.json', 'r', encoding='utf-8') as f:
+                current_config = json.load(f)
+            
+            while True:
+                config_table = Table(title="Configuration (config.json)", show_header=True, header_style="bold cyan")
+                config_table.add_column("Key", style="orange3", justify="right")
+                config_table.add_column("Value", style="yellow")
+                
+                for key, value in current_config.items():
+                    if isinstance(value, bool):
+                        formatted_value = "✓" if value else "✗"
+                    elif isinstance(value, list):
+                        formatted_value = ", ".join(str(x) for x in value[:5]) + ("..." if len(value) > 5 else "")
+                    else:
+                        formatted_value = str(value)
+                        
+                    config_table.add_row(key, formatted_value)
+                
+                Log(config_table, "_")
+                
+                Log("\nOptions:", "_")
+                Log("1. Edit value", "_")
+                # Log("2. Add new key-value", "_") # Only Dev-Purpose
+                # Log("3. Remove key-value", "_") # Only Dev-Purpose
+                Log("2. Save & Exit", "_")
+                Log("3. Exit", "_")
+
+                choice = input("\nEnter choice (1-3): ").strip()
+
+                if choice == "1":
+                    key = input("Enter key to edit: ").strip()
+                    if key in current_config:
+                        current_value = current_config[key]
+                        Log(f"Current value: {current_value}", "i")
+                        
+                        # Handle different value types
+                        if isinstance(current_value, bool):
+                            new_value = input("Enter new value (true/false): ").lower() == 'true'
+                        elif isinstance(current_value, int):
+                            new_value = int(input("Enter new value: "))
+                        elif isinstance(current_value, list):
+                            new_value = input("Enter new values (comma separated): ").split(',')
+                            new_value = [v.strip() for v in new_value]
+                        else:
+                            new_value = input("Enter new value: ")
+                        
+                        current_config[key] = new_value
+                        Log(f"Updated {key} to {new_value}", "s")
+                    else:
+                        Log("Key not found", "f")
+
+                # elif choice == "2":
+                #     key = input("Enter new key: ").strip()
+                #     if key not in current_config:
+                #         value = input("Enter value: ")
+                #         try:
+                #             # Try to evaluate as Python literal
+                #             value = eval(value)
+                #         except:
+                #             # If not a literal, keep as string
+                #             pass
+                #         current_config[key] = value
+                #         Log(f"Added {key}: {value}", "s")
+                #     else:
+                #         Log("Key already exists", "f")
+
+                # elif choice == "3":
+                #     key = input("Enter key to remove: ").strip()
+                #     if key in current_config:
+                #         del current_config[key]
+                #         Log(f"Removed {key}", "s")
+                #     else:
+                #         Log("Key not found", "f")
+
+                elif choice == "2":
+                    # Save to file
+                    with open('config.json', 'w', encoding='utf-8') as f:
+                        json.dump(current_config, f, indent=4, ensure_ascii=False)
+                    Log("Configuration saved", "s")
+                    break
+
+                elif choice == "3":
+                    Log("Exiting without saving", "w")
+                    break
+
+                else:
+                    Log("Invalid choice", "f")
+        if sys.argv[1] == "-h" or sys.argv[1] == "--help":
+            Log("Command list:\n1. -c/--config | To modify config.json\n2. Kanji2Vocab.py [KANJI] [TOTAL_PAGINATION] [PAGE_SCRAPE_METHOD]\n | [KANJI] = Requires any Kanji\n | [TOTAL_PAGINATION] = Require an integer\n | [PAGE_SCRAPE_METHOD] = Either s or c, s = Sequential (one-by-one), c = Concurrent (all-together), default = s\n\nCredit:[#00ffff bold]3oFiz4[/] (Discord, Instagram)", "_")
+        else:
+            Kanji = sys.argv[1]
+            BaseUrl = config['BaseUrl'].format(Kanji=Kanji)
+            run(args1, 20)
     elif len(sys.argv) == 3:
         args1 = sys.argv[1]
         Kanji = args1
