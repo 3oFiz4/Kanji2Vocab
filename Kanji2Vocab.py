@@ -1,4 +1,5 @@
-import requests, pyperclip as copier
+import requests
+import pyperclip as copier
 from bs4 import BeautifulSoup
 import sys
 import json 
@@ -35,16 +36,15 @@ Kanji2Vocab
 8. Add a system when a certain meaning has an example.
 V. Improve Pagination system so instead of `NTH. [VOCAB] ([FURIGANA])\n=>[MEANING]` it has a table generated (Clue: Use Rich).
 V. Show more logs, such as (total vocabs scraped per page)
-11. Make code more readable and less messy :)
+11. Make code more readable and less messy :) (already messy btw, so whats the point?)
 V. Improve Scrapper (optional) = Modified to use LXML, scrape Kanji also, i guess thats an improvement XD
 13. Add an API integration with an AI Chatbot to automatically creates a Spoiler, and contextual usage of a vocabulary (optional)
 14. Add stroke drawing (optional)
 
-Minor fixes:
-Do not forget to do:
-1. git add .
-2. git commit -m "comit msg"
-3. git push origin main 
+Credit: 3oFiz4
+
+Additional Idea:
+Accomodate Kanji(forgot the name ;-; ) which accomodate more examples, and kanji info.
 '''
 
 with open('config.json', 'r', encoding='utf-8') as f:
@@ -127,28 +127,43 @@ def shortifyMeaning(Meaning):
 
     Shortify the $Meaning, each meaning label will be shortened (e.g. Noun => N.)
     """
+    # First replace semicolons with commas
+    Meaning = [m.replace(';', ',') for m in Meaning]
+    
+    # Replace specific patterns
     pattern_map = {
-        'Noun': 'N.',
-        'Suru verb': '(suru)',
-        'Transitive verb': 'Tv',
-        'Intransitive verb': 'Iv',
-        'Wikipedia definition': 'Wiki',
-        'Adverb (fukushi)': 'Adv.'
+        'Adverb (fukushi)': 'adv',
+        'Noun which may take the genitive case particle \'no\'': 'adjの',
+        'Noun': 'n',
+        'Suru verb': 'vs',
+        'Transitive verb': 'vt', 
+        'Intransitive verb': 'vi',
+        'Ichidan verb': 'v1',
+        'Godan verb': 'v5',
+        'Na-adjective (keiyodoshi)': 'adjな',
+        'I-adjective (keiyoushi)': 'adjい',
+        'Wikipedia definition': 'wk',
+        'Expressions (phrases, clauses, etc.)': 'exp',
+        '(Other forms)': 'alt'
     }
     
-    for i in range(len(Meaning)):
-        meaning = Meaning[i]
-        
-        def replace_terms(match):
-            term = match.group(1).strip()
-            if term in pattern_map:
-                return f"({pattern_map[term]})"
-            return term
 
-        meaning = re.sub(r'\((.*?)\)', replace_terms, meaning)
-        Meaning[i] = meaning.strip()
+    processed = []
+    for i, meaning in enumerate(Meaning, 1):
+        for pattern, replacement in pattern_map.items():
+            meaning = meaning.replace(pattern, replacement)
+            
+        parts = meaning.split(',')
+        for j in range(len(parts)):
+            parts[j] = parts[j].strip()
+            if j > 0 and parts[j].startswith('to ') and any(p.startswith('to ') for p in parts[:j]):
+                parts[j] = parts[j][3:]
+        
+        meaning = f"{i}. " + ', '.join(parts)
+        processed.append(meaning)
     
-    return Meaning
+    # Join with newlines
+    return '\n'.join(processed)
 
 def toOnyomi(value, kanji):
         '''
@@ -168,7 +183,7 @@ def toOnyomi(value, kanji):
             
             # If this onyomi reading exists in hiragana form, replace it with katakana
             if onyomi_hiragana in result:
-                result = result.replace(onyomi_hiragana, onyomi)
+                result = result.replace(onyomi_hiragana, f"[#008888]{onyomi}[/]")
         
         return result
 
@@ -584,14 +599,11 @@ def run(Kanji, limit=20, method="s"):
     current_page = 0
     total_pages = (total_items + paginationLimit - 1) // paginationLimit
     
+    selectedVocabulary = set()
+    
     while True:
         # Clear previous output
         print("\033[H\033[J")
-        
-        # # Show pagination info (Old Version VVV)
-        # Log(f"Page {current_page + 1} of {total_pages}")
-        # Log(f"Items {current_page * paginationLimit + 1}-{min((current_page + 1) * paginationLimit, total_items)} of {total_items}")
-        # # Log("Scraped Vocabulary:")
         
         # Display current page items
         start_idx = current_page * paginationLimit
@@ -607,9 +619,21 @@ def run(Kanji, limit=20, method="s"):
         # Enumerated vocabulary items
         for i in range(start_idx, end_idx):
             eVocab = Scraper[i]
-            scrapedVocabularyTable.add_row(f"{i + 1}. {eVocab['Vocab']}", f"{eVocab['Furi']}", f"{eVocab['Tag']}", f"{eVocab['Meaning']}")
-            # This is default! VVV
-            # color_print(f"{i + 1}. [cyan bold]{eVocab['Vocab']}[/] ([#0ff i]{eVocab['Furi']})[/] <{eVocab['Tag']}> \n=> [#0f0 bold]{eVocab['Meaning']}[/]")
+            # Change style if vocabulary was previously copied
+            if i in selectedVocabulary:
+                scrapedVocabularyTable.add_row(
+                    f"[blue]{i + 1}. {eVocab['Vocab']}[/]",
+                    f"[blue]{eVocab['Furi']}[/]",
+                    f"[blue]{eVocab['Tag']}[/]",
+                    f"[blue]{eVocab['Meaning']}[/]"
+                )
+            else:
+                scrapedVocabularyTable.add_row(
+                    f"{i + 1}. {eVocab['Vocab']}", 
+                    f"{eVocab['Furi']}", 
+                    f"{eVocab['Tag']}", 
+                    f"{eVocab['Meaning']}"
+                )
         
         scrapedVocabularyConsole = Console()
         
@@ -643,8 +667,9 @@ Info: {kanji_scraped['Info']}
                     FURIGANA=r"{{c3::"+str(eVocab['Furi'])+r"}}",
                     TAG=eVocab['Tag']
                 )
-                # Copy to clipboard
+                # Copy to clipboard and mark as copied
                 copier.copy(formatted_template)
+                selectedVocabulary.add(index)
                 Log("Recorded to clipboard", "s")
             else:
                 Log("Invalid number. Enter a valid vocabulary number.", "c")
