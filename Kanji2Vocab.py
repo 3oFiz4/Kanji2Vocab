@@ -183,7 +183,7 @@ def toOnyomi(value, kanji):
             
             # If this onyomi reading exists in hiragana form, replace it with katakana
             if onyomi_hiragana in result:
-                result = result.replace(onyomi_hiragana, f"[#008888]{onyomi}[/]")
+                result = result.replace(onyomi_hiragana, f"[#00aaff]{onyomi}[/]")
         
         return result
 
@@ -347,6 +347,12 @@ def formatMeaning(html):
     
     return formatted_meanings
 
+def cvHTML(meaning):
+    # Regex untuk mendeteksi pola [#xxxxxx]text[/]
+    pattern = r'\[#([0-9A-Fa-f]{6})\](.*?)\[/\]'
+    # Mengganti pola tersebut dengan tag HTML
+    return re.sub(pattern, r'<span style="color:#\1">\2</span>', meaning)
+
 class paginationHandler:
     # Handle pagination (Sequential)
     def Sequential(Kanji, p):
@@ -409,7 +415,8 @@ Info: {kanji_scraped['Info']}
             """
             Wrapper for the scrape function to handle each page with retries.
 
-            Thanks to ChatGPT for the retry idea: When I wrote this function, I was stuck on thinking... How may I avoid persistent timeout? Then ChatGPT goes, here fam.
+            Thanks to ChatGPT for the retry idea: When I wrote this function, I was stuck on thinking... 
+            How may I avoid persistent timeout? Then ChatGPT goes, here fam.
             """
             for attempt in range(retries):
                 try:
@@ -572,7 +579,7 @@ Info: {kanji_scraped['Info']}
 
         return resultsMerge
 
-def run(Kanji, limit=20, method="s"):
+def run(Kanji, limit=20, method="c"):
     """
     Require $Kanji, *limit
 
@@ -660,11 +667,12 @@ Info: {kanji_scraped['Info']}
             index = int(command) - 1
             if 0 <= index < total_items:
                 eVocab = Scraper[index]
+                htmlReadable = cvHTML(eVocab['Furi'])
                 formatted_template = Template.format(
                     KANJI=Kanji, 
                     VOCAB=r"{{c1::"+eVocab['Vocab']+r"}}",
-                    MEANING=r"{{c2::"+str(r"<br>".join(eVocab['Meaning']))+r"}}",
-                    FURIGANA=r"{{c3::"+str(eVocab['Furi'])+r"}}",
+                    MEANING=r"{{c2::"+eVocab['Meaning']+r"}}",
+                    FURIGANA=r"{{c3::"+htmlReadable+r"}}",
                     TAG=eVocab['Tag']
                 )
                 # Copy to clipboard and mark as copied
