@@ -165,27 +165,41 @@ def shortifyMeaning(Meaning):
     # Join with newlines
     return '\n'.join(processed)
 
-def toOnyomi(value, kanji):
-        '''
-        Convert only matching onyomi parts from hiragana to katakana
-        For example: にんげん -> ニンげん (because にん matches the onyomi ニン)
-        '''
-        # Clean up onyomi readings - remove 'On:' prefix and get clean list
-        onyomi_list = [reading.replace('On:', '').strip() for reading in kanji['Onyomi'].split('、')]
+def parseColor(value, kanji):
+    '''
+    Convert matching onyomi parts from hiragana to katakana with one color,
+    and kunyomi parts with another color.
+    For example: にんげん -> ニンげん (because にん matches the onyomi ニン)
+    '''
+    # Clean up onyomi readings - remove 'On:' prefix and get clean list
+    onyomi_list = [reading.replace('On:', '').strip() for reading in kanji['Onyomi'].split('、')]
+    # Clean up kunyomi readings - remove 'Kun:' prefix and '-' characters, then get clean list
+    kunyomi_list = [reading.replace('Kun:', '').replace('-', '').strip() for reading in kanji['Kunyomi'].split('、')]
+
+    result = value
+    for onyomi in onyomi_list:
+        # Convert onyomi to hiragana for comparison
+        onyomi_hiragana = ''.join(
+            chr(ord(char) - 0x60) if 'ァ' <= char <= 'ヶ' else char 
+            for char in onyomi
+        )
         
-        result = value
-        for onyomi in onyomi_list:
-            # Convert onyomi to hiragana for comparison
-            onyomi_hiragana = ''.join(
-                chr(ord(char) - 0x60) if 'ァ' <= char <= 'ヶ' else char 
-                for char in onyomi
-            )
-            
-            # If this onyomi reading exists in hiragana form, replace it with katakana
-            if onyomi_hiragana in result:
-                result = result.replace(onyomi_hiragana, f"[#00aaff]{onyomi}[/]")
+        # If this onyomi reading exists in hiragana form, replace it with katakana
+        if onyomi_hiragana in result:
+            result = result.replace(onyomi_hiragana, f"[#00aaff]{onyomi}[/]")
+
+    for kunyomi in kunyomi_list:
+        # Convert kunyomi to hiragana for comparison
+        kunyomi_hiragana = ''.join(
+            chr(ord(char) - 0x60) if 'ァ' <= char <= 'ヶ' else char 
+            for char in kunyomi
+        )
         
-        return result
+        # If this kunyomi reading exists in hiragana form, replace it with katakana
+        if kunyomi_hiragana in result:
+            result = result.replace(kunyomi_hiragana, f"[#ffff00]{kunyomi}[/]")
+
+    return result
 
 def scrape(Kanji, pnth):
     """
@@ -314,7 +328,7 @@ def scrape(Kanji, pnth):
                 
                 results.append({
                     "Vocab": scrVocab,
-                    "Furi": toOnyomi(scrFuri,kanji_scraped),
+                    "Furi": parseColor(scrFuri,kanji_scraped),
                     "Meaning": Meaning,
                     "Tag": Tag
                 })
@@ -668,10 +682,12 @@ Info: {kanji_scraped['Info']}
             if 0 <= index < total_items:
                 eVocab = Scraper[index]
                 htmlReadable = cvHTML(eVocab['Furi'])
+                # Modify the Meaning to include <br> before each enumeration
+                formatted_meaning = re.sub(r'(\d+\.)', r'<br>\1', eVocab['Meaning'])
                 formatted_template = Template.format(
                     KANJI=Kanji, 
                     VOCAB=r"{{c1::"+eVocab['Vocab']+r"}}",
-                    MEANING=r"{{c2::"+eVocab['Meaning']+r"}}",
+                    MEANING=r"{{c2::"+formatted_meaning+r"}}",
                     FURIGANA=r"{{c3::"+htmlReadable+r"}}",
                     TAG=eVocab['Tag']
                 )
