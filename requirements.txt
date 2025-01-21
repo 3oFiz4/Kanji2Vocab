@@ -1,1 +1,1 @@
-beautifulsoup4, requests, rich, pyperclip, lxml
+beautifulsoup4, requests, rich, pyperclip, lxml, orjson, asyncio, aiohttp

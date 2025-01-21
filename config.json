@@ -6,5 +6,9 @@
     "PaginationLimit": 15,
     "isTemplate": true,
     "isTagShortened": true,
-    "isMeaningShortened": true
+    "isMeaningShortened": true,
+    "AnkiDeck": "ABC",
+    "AnkiModelVocabulary": "Enhanced Cloze 2.1 v2",
+    "AnkiModelKanji": "Japanese",
+    "VocabularyMethod": "a"
 }

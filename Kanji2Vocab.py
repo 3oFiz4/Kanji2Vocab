@@ -16,6 +16,10 @@ from rich import print as color_print
 from threading import Lock
 import concurrent.futures
 import random
+import orjson
+import aiohttp as aio
+import asyncio as io
+
 
 '''
 To-Do:
@@ -58,8 +62,89 @@ isTemplate = config['isTemplate']
 isTagShortened = config['isTagShortened']
 isMeaningShortened = config['isMeaningShortened']
 PaginationLimit = config['PaginationLimit']
+AnkiDeck = config['AnkiDeck']
+AnkiModelVocabulary = config['AnkiModelVocabulary']
+AnkiModelKanji = config['AnkiModelKanji']
+VocabularyMethod = config['VocabularyMethod']
+
 # ----------------- P R O G R A M --------------------------------------
 kanji_scraped = None
+
+class Anki:
+    class Interactor:
+        def __init__(self, url="http://localhost:8765"): # Assuming the user did not change the port.
+            self.url = url
+            self.session = requests.Session()
+        
+        async def invoke(self, action, **params):
+            """
+            Sends request to the AnkiConnect API and returns the result.
+            """
+            payload = {
+                "action": action,
+                "version": 6,
+                "params": params,
+            }
+            async with aio.ClientSession() as session:
+                async with session.post(self.url, json=payload) as response:
+                    if response.status != 200:
+                        raise Exception(f"Anki::HTTP [ERR]: {response.status} when {await response.text()}")
+                    response_data = await orjson.loads(response.content) # Heard using orjson makes the json parsing faster
+                    if "error" in response_data and response_data["error"] is not None:
+                        raise Exception(f"Anki::Interactor [ERR]: {response_data['error']}")
+                    return response_data["result"]
+    
+    class POST:
+        def __init__(self, anki_connect):
+            self.anki_connect = anki_connect
+
+        # Testing purpose.
+        # def Specify(self, deck_name):
+        #     """
+        #     Ensures the specified deck exists. Creates it if not.
+        #     """
+        #     decks = self.anki_connect.invoke("deckNames")
+        #     if deck_name not in decks:
+        #         Log(f"Deck '{deck_name}' not found.", "f")
+        #     else:
+        #         Log(f"Found Deck '{deck_name}'.")
+
+        async def NoteCreate(self, value, model):
+            """
+            Creates a note in the specified deck with the provided fields.
+            """
+            # Ensure the note_fields dict contains the necessary field names
+            if not value:
+                raise ValueError("Should atleast contain one fields.")
+            
+            note = {
+                "deckName": AnkiDeck,
+                "modelName": model,
+                "fields": value,
+                "tags": ["AutoCreated"],
+                "options": {
+                    "allowDuplicate": True
+                }
+            }
+
+            # Readme:
+            # The param:value should be inserted in this way:
+            # note_fields = {
+            #     "Front": "What is the capital of France?",
+            #     "Back": "Paris",
+            #     "ExtraField1": "Additional information goes here.",  # You can add any field here
+            #     "ExtraField2": "Even more details if needed."  # Customize your fields
+            # }
+            result = await self.anki_connect.invoke("addNote", note=note)
+            if result:
+                Log(f"Note created in '{AnkiDeck}'.")
+            else:
+                Log("Failure (is it a duplicate?)", 'f')
+
+# AnkiConnect Initialization
+anki_interact = Anki.Interactor()
+anki = Anki.POST(anki_interact)
+
 def inputKanji():
     while True:
         type = Console()
@@ -75,19 +160,19 @@ def Log(text, status=0):
     A simple Log with color. (credit: Rich), see module.
     """
     if status == "f":
-        color_print(f"[red bold][X]{text}[/]") 
+        color_print(f"[red bold][X] {text}[/]") 
     elif status == "s":
-        color_print(f"[green bold][V]{text}[/]") 
+        color_print(f"[green bold][V] {text}[/]") 
     elif status == "c":
-        color_print(f"[yellow bold][?]{text}[/]") 
+        color_print(f"[yellow bold][?] {text}[/]") 
     elif status == "w":
-        color_print(f"[orange bold][!]{text}[/]") 
+        color_print(f"[orange bold][!] {text}[/]") 
     elif status == "i":
         color_print(f"[blue]{text}[/]") 
     elif status == '_':
         color_print(text)
     else:
-        color_print(f"[green bold]{text}[/]") 
+        color_print(f"[green bold][V] {text}[/]") 
 
 def isVocab(scrVocab):
     """ 
@@ -600,7 +685,7 @@ Info: {kanji_scraped['Info']}
 
         return resultsMerge
 
-def run(Kanji, limit=20, method="c"):
+async def run(Kanji, limit=20, method="c"):
     """
     Require $Kanji, *limit
 
@@ -699,9 +784,15 @@ Info: {kanji_scraped['Info']}
                     TAG=eVocab['Tag']
                 )
                 # Copy to clipboard and mark as copied
-                copier.copy(formatted_template)
-                selectedVocabulary.add(index)
-                Log("Recorded to clipboard", "s")
+                if VocabularyMethod == "m":
+                    copier.copy(formatted_template)
+                    selectedVocabulary.add(index)
+                    Log("Recorded to clipboard", "s")
+                else:
+                    await anki.NoteCreate({
+                        "Content": formatted_template,
+                    }, AnkiModelVocabulary)
+                    Log("Recorded to Anki (AnkiConnect)", "s")
             else:
                 Log("Invalid number. Enter a valid vocabulary number.", "c")
         elif command == "k" or command == "kanji":
@@ -713,12 +804,20 @@ Info: {kanji_scraped['Info']}
                     INFO=kanji_scraped['Info']
                 )
                 # Copy to clipboard
-            copier.copy(formatted_template)
-            Log("Recorded to clipboard", "s")
+            if VocabularyMethod == "m":
+                copier.copy(formatted_template)
+                Log("Recorded to clipboard", "s")
+            else:
+                await anki.NoteCreate({
+                    "Kanji": Kanji,
+                    "Keyword": kanji_scraped['Meaning'].replace(f"({Kanji})", ""),
+                    "Story": formatted_template,
+                }, AnkiModelKanji)
+                Log("Recorded to Anki (AnkiConnect)", "s")
         else:
             Log("Use <, >, _ to navigate or enter a number", "c")
 
-def main():
+async def main():
     global BaseUrl, Kanji
     # a1 = Kanji, a2 = Total Pagination, a3 = Method
     if len(sys.argv) == 2:
@@ -815,23 +914,24 @@ def main():
         else:
             Kanji = sys.argv[1]
             BaseUrl = config['BaseUrl'].format(Kanji=Kanji)
-            run(args1, 20)
+            await run(Kanji, 20)
     elif len(sys.argv) == 3:
         Kanji = sys.argv[1]
         Total = sys.argv[2]
         BaseUrl = config['BaseUrl'].format(Kanji=Kanji)
-        run(Kanji, int(Total))
+        await run(Kanji, int(Total))
     elif len(sys.argv) == 4:
         Kanji = sys.argv[1]
         Total = sys.argv[2]
         Method = sys.argv[3]
         BaseUrl = config['BaseUrl'].format(Kanji=Kanji)
-        run(Kanji, int(Total), Method)
+        await run(Kanji, int(Total), Method)
     else:
         Kanji = inputKanji()
         BaseUrl = config['BaseUrl'].format(Kanji=Kanji)
         howmuch = int(input("Total page: ").strip())
-        run(Kanji, howmuch)
+        await run(Kanji, howmuch)
 
 if __name__ == "__main__":
-    main()
+    io.run(main())
+    
