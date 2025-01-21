@@ -792,6 +792,7 @@ Info: {kanji_scraped['Info']}
                     io.create_task(anki.NoteCreate({
                         "Content": formatted_template,
                     }, AnkiModelVocabulary))
+                    selectedVocabulary.add(index)
                     Log("Recorded to Anki (AnkiConnect)", "s")
             else:
                 Log("Invalid number. Enter a valid vocabulary number.", "c")
