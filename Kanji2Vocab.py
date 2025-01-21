@@ -135,7 +135,7 @@ def shortifyMeaning(Meaning):
         'Adverb (fukushi)': 'adv',
         'Noun which may take the genitive case particle \'no\'': 'adjの',
         'Noun': 'n',
-        'Suru verb': 'vs',
+        'Suru verb': 'vする',
         'Transitive verb': 'vt', 
         'Intransitive verb': 'vi',
         'Ichidan verb': 'v1',
@@ -171,12 +171,20 @@ def parseColor(value, kanji):
     and kunyomi parts with another color.
     For example: にんげん -> ニンげん (because にん matches the onyomi ニン)
     '''
-    # Clean up onyomi readings - remove 'On:' prefix and get clean list
-    onyomi_list = [reading.replace('On:', '').strip() for reading in kanji['Onyomi'].split('、')]
-    # Clean up kunyomi readings - remove 'Kun:' prefix and '-' characters, then get clean list
-    kunyomi_list = [reading.replace('Kun:', '').replace('-', '').strip() for reading in kanji['Kunyomi'].split('、')]
+    # Initialize onyomi and kunyomi lists if they exist
+    onyomi_list = []
+    kunyomi_list = []
+
+    if kanji.get('Onyomi'):
+        # Clean up onyomi readings - remove 'On:' prefix and get clean list
+        onyomi_list = [reading.replace('On:', '').strip() for reading in kanji['Onyomi'].split('、')]
+
+    if kanji.get('Kunyomi'):
+        # Clean up kunyomi readings - remove 'Kun:' prefix and '-' characters, then get clean list
+        kunyomi_list = [reading.replace('Kun:', '').replace('-', '').strip() for reading in kanji['Kunyomi'].split('、')]
 
     result = value
+
     for onyomi in onyomi_list:
         # Convert onyomi to hiragana for comparison
         onyomi_hiragana = ''.join(
@@ -189,13 +197,12 @@ def parseColor(value, kanji):
             result = result.replace(onyomi_hiragana, f"[#00aaff]{onyomi}[/]")
 
     for kunyomi in kunyomi_list:
-        # Convert kunyomi to hiragana for comparison
+        # Same thing like above but for Kunyomi
         kunyomi_hiragana = ''.join(
             chr(ord(char) - 0x60) if 'ァ' <= char <= 'ヶ' else char 
             for char in kunyomi
         )
-        
-        # If this kunyomi reading exists in hiragana form, replace it with katakana
+    
         if kunyomi_hiragana in result:
             result = result.replace(kunyomi_hiragana, f"[#ffff00]{kunyomi}[/]")
 
@@ -738,10 +745,10 @@ def main():
                 
                 Log("\nOptions:", "_")
                 Log("1. Edit value", "_")
-                # Log("2. Add new key-value", "_") # Only Dev-Purpose
-                # Log("3. Remove key-value", "_") # Only Dev-Purpose
-                Log("2. Save & Exit", "_")
-                Log("3. Exit", "_")
+                Log("2. Add new key-value (dev only)", "_") # Only Dev-Purpose
+                Log("3. Remove key-value (dev only)", "_") # Only Dev-Purpose
+                Log("4. Save & Exit", "_")
+                Log("5. Exit", "_")
 
                 choice = input("\nEnter choice (1-3): ").strip()
 
@@ -767,37 +774,37 @@ def main():
                     else:
                         Log("Key not found", "f")
 
-                # elif choice == "2":
-                #     key = input("Enter new key: ").strip()
-                #     if key not in current_config:
-                #         value = input("Enter value: ")
-                #         try:
-                #             # Try to evaluate as Python literal
-                #             value = eval(value)
-                #         except:
-                #             # If not a literal, keep as string
-                #             pass
-                #         current_config[key] = value
-                #         Log(f"Added {key}: {value}", "s")
-                #     else:
-                #         Log("Key already exists", "f")
-
-                # elif choice == "3":
-                #     key = input("Enter key to remove: ").strip()
-                #     if key in current_config:
-                #         del current_config[key]
-                #         Log(f"Removed {key}", "s")
-                #     else:
-                #         Log("Key not found", "f")
-
                 elif choice == "2":
+                    key = input("Enter new key: ").strip()
+                    if key not in current_config:
+                        value = input("Enter value: ")
+                        try:
+                            # Try to evaluate as Python literal
+                            value = eval(value)
+                        except:
+                            # If not a literal, keep as string
+                            pass
+                        current_config[key] = value
+                        Log(f"Added {key}: {value}", "s")
+                    else:
+                        Log("Key already exists", "f")
+
+                elif choice == "3":
+                    key = input("Enter key to remove: ").strip()
+                    if key in current_config:
+                        del current_config[key]
+                        Log(f"Removed {key}", "s")
+                    else:
+                        Log("Key not found", "f")
+
+                elif choice == "4":
                     # Save to file
                     with open('config.json', 'w', encoding='utf-8') as f:
                         json.dump(current_config, f, indent=4, ensure_ascii=False)
                     Log("Configuration saved", "s")
                     break
 
-                elif choice == "3":
+                elif choice == "5":
                     Log("Exiting without saving", "w")
                     break
 
@@ -810,18 +817,16 @@ def main():
             BaseUrl = config['BaseUrl'].format(Kanji=Kanji)
             run(args1, 20)
     elif len(sys.argv) == 3:
-        args1 = sys.argv[1]
-        Kanji = args1
-        args2 = sys.argv[2]
-        BaseUrl = config['BaseUrl'].format(Kanji=args1)
-        run(args1, int(args2))
+        Kanji = sys.argv[1]
+        Total = sys.argv[2]
+        BaseUrl = config['BaseUrl'].format(Kanji=Kanji)
+        run(Kanji, int(Total))
     elif len(sys.argv) == 4:
-        args1 = sys.argv[1]
-        Kanji = args1
-        args2 = sys.argv[2]
-        args3 = sys.argv[3]
-        BaseUrl = config['BaseUrl'].format(Kanji=args1)
-        run(args1, int(args2), args3)
+        Kanji = sys.argv[1]
+        Total = sys.argv[2]
+        Method = sys.argv[3]
+        BaseUrl = config['BaseUrl'].format(Kanji=Kanji)
+        run(Kanji, int(Total), Method)
     else:
         Kanji = inputKanji()
         BaseUrl = config['BaseUrl'].format(Kanji=Kanji)
