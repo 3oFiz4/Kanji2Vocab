@@ -16,7 +16,7 @@ from rich import print as color_print
 from threading import Lock
 import concurrent.futures
 import random
-import orjson
+# import orjson
 import aiohttp as aio
 import asyncio as io
 
@@ -89,7 +89,7 @@ class Anki:
                 async with session.post(self.url, json=payload) as response:
                     if response.status != 200:
                         raise Exception(f"Anki::HTTP [ERR]: {response.status} when {await response.text()}")
-                    response_data = await orjson.loads(response.content) # Heard using orjson makes the json parsing faster
+                    response_data = await response.json() # I'm too lazy to try to use orjson:::await orjson.loads(response.content) # Heard using orjson makes the json parsing faster
                     if "error" in response_data and response_data["error"] is not None:
                         raise Exception(f"Anki::Interactor [ERR]: {response_data['error']}")
                     return response_data["result"]
@@ -789,9 +789,9 @@ Info: {kanji_scraped['Info']}
                     selectedVocabulary.add(index)
                     Log("Recorded to clipboard", "s")
                 else:
-                    await anki.NoteCreate({
+                    io.create_task(anki.NoteCreate({
                         "Content": formatted_template,
-                    }, AnkiModelVocabulary)
+                    }, AnkiModelVocabulary))
                     Log("Recorded to Anki (AnkiConnect)", "s")
             else:
                 Log("Invalid number. Enter a valid vocabulary number.", "c")
@@ -808,11 +808,11 @@ Info: {kanji_scraped['Info']}
                 copier.copy(formatted_template)
                 Log("Recorded to clipboard", "s")
             else:
-                await anki.NoteCreate({
+                io.create_task(anki.NoteCreate({
                     "Kanji": Kanji,
                     "Keyword": kanji_scraped['Meaning'].replace(f"({Kanji})", ""),
                     "Story": formatted_template,
-                }, AnkiModelKanji)
+                }, AnkiModelKanji))
                 Log("Recorded to Anki (AnkiConnect)", "s")
         else:
             Log("Use <, >, _ to navigate or enter a number", "c")
