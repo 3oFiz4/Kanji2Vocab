@@ -37,13 +37,15 @@ Kanji2Vocab
 3. Credit 
 4. Exit
 
-8. Add a system when a certain meaning has an example.
+V. Add a system when a certain meaning has an example.
 V. Improve Pagination system so instead of `NTH. [VOCAB] ([FURIGANA])\n=>[MEANING]` it has a table generated (Clue: Use Rich).
 V. Show more logs, such as (total vocabs scraped per page)
 11. Make code more readable and less messy :) (already messy btw, so whats the point?)
 V. Improve Scrapper (optional) = Modified to use LXML, scrape Kanji also, i guess thats an improvement XD
 13. Add an API integration with an AI Chatbot to automatically creates a Spoiler, and contextual usage of a vocabulary (optional)
-14. Add stroke drawing (optional)
+V. Add stroke drawing (optional)
+V. Add colored for some tags and info
+V. Add example sentence
 
 Credit: 3oFiz4
 
@@ -66,33 +68,33 @@ AnkiDeck = config['AnkiDeck']
 AnkiModelVocabulary = config['AnkiModelVocabulary']
 AnkiModelKanji = config['AnkiModelKanji']
 VocabularyMethod = config['VocabularyMethod']
+isColored = config['isColored']
 
 # ----------------- P R O G R A M --------------------------------------
 kanji_scraped = None
-
+raw_svg = None
 class Anki:
     class Interactor:
         def __init__(self, url="http://localhost:8765"): # Assuming the user did not change the port.
             self.url = url
             self.session = requests.Session()
-        
+
         async def invoke(self, action, **params):
             """
-            Sends request to the AnkiConnect API and returns the result.
+            Sends a request to the AnkiConnect API asynchronously and returns the result.
             """
             payload = {
                 "action": action,
                 "version": 6,
                 "params": params,
             }
-            async with aio.ClientSession() as session:
-                async with session.post(self.url, json=payload) as response:
-                    if response.status != 200:
-                        raise Exception(f"Anki::HTTP [ERR]: {response.status} when {await response.text()}")
-                    response_data = await response.json() # I'm too lazy to try to use orjson:::await orjson.loads(response.content) # Heard using orjson makes the json parsing faster
-                    if "error" in response_data and response_data["error"] is not None:
-                        raise Exception(f"Anki::Interactor [ERR]: {response_data['error']}")
-                    return response_data["result"]
+            response = self.session.post(self.url, json=payload)
+            if response.status_code != 200:
+                raise Exception(f"Anki::HTTP [ERR]: {response.status_code} when {response.text}")
+            response_data = response.json()
+            if "error" in response_data and response_data["error"] is not None:
+                raise Exception(f"Anki::Interactor [ERR]: {response_data['error']}")
+            return response_data["result"]
     
     class POST:
         def __init__(self, anki_connect):
@@ -115,35 +117,34 @@ class Anki:
             """
             # Ensure the note_fields dict contains the necessary field names
             if not value:
-                raise ValueError("Should atleast contain one fields.")
+                raise ValueError("Should at least contain one field.")
             
             note = {
                 "deckName": AnkiDeck,
                 "modelName": model,
                 "fields": value,
-                "tags": ["AutoCreated"],
+                "tags": ["Kanji2VocabCreation"],
                 "options": {
-                    "allowDuplicate": True
+                    "allowDuplicate": False
                 }
             }
 
-            # Readme:
-            # The param:value should be inserted in this way:
-            # note_fields = {
-            #     "Front": "What is the capital of France?",
-            #     "Back": "Paris",
-            #     "ExtraField1": "Additional information goes here.",  # You can add any field here
-            #     "ExtraField2": "Even more details if needed."  # Customize your fields
-            # }
-            result = await self.anki_connect.invoke("addNote", note=note)
-            if result:
-                Log(f"Note created in '{AnkiDeck}'.")
-            else:
-                Log("Failure (is it a duplicate?)", 'f')
+            try:
+                result = await self.anki_connect.invoke("addNote", note=note)
+                print(result)
+                if result is not None:
+                    Log(f"Note created in '{AnkiDeck}'.", 's')
+                else:
+                    Log("Failure (is it a duplicate?)", 'f')
+            except Exception as e:
+                Log(f"An error occurred: {str(e)}", 'f')
 
 # AnkiConnect Initialization
 anki_interact = Anki.Interactor()
 anki = Anki.POST(anki_interact)
+if anki_interact and anki:
+    print("AnkiAPI Connected")
+
 
 def inputKanji():
     while True:
@@ -159,6 +160,7 @@ def Log(text, status=0):
     """ 
     A simple Log with color. (credit: Rich), see module.
     """
+    
     if status == "f":
         color_print(f"[red bold][X] {text}[/]") 
     elif status == "s":
@@ -173,6 +175,17 @@ def Log(text, status=0):
         color_print(text)
     else:
         color_print(f"[green bold][V] {text}[/]") 
+
+def _c(text, hex_color):
+    x = f'<span id="k2v-colored" style="color:#{hex_color}">{text}</span>'  # Non-BaseConsole version
+    return x
+
+def c_(text):
+    pattern = r'<span id="k2v-colored" style="color:#(\w{6})">(.*?)<\/span>'
+    transformed_text = re.sub(pattern, r'[#\1]\2[/]', text,  flags=re.DOTALL | re.IGNORECASE)
+    return transformed_text
+
+# These two functions above is brothers. _c is used for output. c_ is used for console. The color that appears in output and console are different. c_ simply converting them.
 
 def isVocab(scrVocab):
     """ 
@@ -217,19 +230,26 @@ def shortifyMeaning(Meaning):
     
     # Replace specific patterns
     pattern_map = {
-        'Adverb (fukushi)': 'adv',
+        'Adverb (fukushi)': _c("adv", "00ff7f"),
         'Noun which may take the genitive case particle \'no\'': 'adjの',
         'Noun': 'n',
-        'Suru verb': 'vする',
+        'Suru verb': _c('vする', '216bd6'),
         'Transitive verb': 'vt', 
         'Intransitive verb': 'vi',
-        'Ichidan verb': 'v1',
-        'Godan verb': 'v5',
-        'Na-adjective (keiyodoshi)': 'adjな',
-        'I-adjective (keiyoushi)': 'adjい',
-        'Wikipedia definition': 'wk',
-        'Expressions (phrases, clauses, etc.)': 'exp',
-        '(Other forms)': 'alt'
+        'Ichidan verb': _c('v1', "ff0000"),
+        'Godan verb': _c('v5', '00ffff'),
+        'Na-adjective (keiyodoshi)': _c('adjな', 'ff00ff'),
+        'I-adjective (keiyoushi)': _c('adjい', '00ff00'),
+        'Wikipedia definition': _c("wk", "c0c0c0"),
+        'Expressions (phrases, clauses, etc.)': _c("exp", "6a5acd"),
+        '(Other forms)': _c("alt", "708090"),
+        'Conjunction': 'conj',
+        '------': '-------', 
+        'Usually written using kana alone , usu. as': _c("KANA usu. AS:", "ff1493"),
+        'Usually written using kana alone , as': _c("KANA AS:", "ff1493"),
+        'Usually written using kana alone': _c("KANA", "ff1493"),
+        'Antonym:': 'ANT:',
+        'esp.': 'ESP:'
     }
     
 
@@ -292,6 +312,35 @@ def parseColor(value, kanji):
             result = result.replace(kunyomi_hiragana, f"[#ffff00]{kunyomi}[/]")
 
     return result
+
+
+def uni(text):
+    '''
+    Gets the unicode of a $:text
+    '''
+    unicode = None
+    for char in text:
+        unicode_number = ord(char)
+        unicode = f"{unicode_number:05X}"  # Changed to 5 digits to ensure leading 0
+    return unicode
+
+
+async def kanjiStrokeScrape(Kanji):
+    async with aio.ClientSession() as session:
+        URL = f"https://www.lemoda.net/kvg/{uni(Kanji).lower()}.svg" # Why lower()? Because the URL only accepts it when the word is lowercase, ant not uppercase.
+        async with session.get(URL) as response:
+            if response.status == 200:
+                svg_content = await response.text()
+                start_index = svg_content.find('<svg')
+                end_index = svg_content.find('</svg>', start_index) + len('</svg>')
+                first_svg_element = svg_content[start_index:end_index]
+                
+                soup = BeautifulSoup(first_svg_element, 'xml')
+                g_element = soup.find('g', id=lambda x: x and x.startswith('kvg:StrokePaths'))
+                if g_element:
+                    g_element['style'] = 'stroke:#fff; background:#000'
+                modified_svg = str(soup)
+                return modified_svg
 
 def scrape(Kanji, pnth):
     """
@@ -412,19 +461,19 @@ def scrape(Kanji, pnth):
                 tagContents = [tag.get_text(strip=True) for tag in scrTags if tag]
                 tagContents = [content for content in tagContents if content]
 
+
                 # Join tag contents into a single string
                 Tag = shortifyTag(', '.join(tagContents)) if isTagShortened else ', '.join(tagContents)
                 
                 # Process meaning
                 Meaning = shortifyMeaning(formatMeaning(eTargetElementMeaning)) if isMeaningShortened else formatMeaning(eTargetElementMeaning)
-                
+
                 results.append({
                     "Vocab": scrVocab,
                     "Furi": parseColor(scrFuri,kanji_scraped),
                     "Meaning": Meaning,
                     "Tag": Tag
                 })
-
         return results, isNextPagination, totalScraped
     # Whenever you modify the return above, you should check out for PaginationHandler class and see both two methods, that handles these.
     else:
@@ -443,12 +492,57 @@ def formatMeaning(html):
 
     formatted_meanings = []
 
+    # Only applies when filtering the meaning!
+    # 1. Striped away the PARENT element tag.
+    # 2. Striped away the CHILD element tag EXCEPT <a href>
+    def Filter(raw):
+        result = []
+        for elem in raw.descendants:
+            if isinstance(elem, str):  
+                result.append(elem.strip())  # Keep text
+            elif elem.name == "a" and elem.has_attr("href"):
+                result.append(str(elem))  # Keep <a> tag with href
+                
+        return " ".join(result).strip()
+    
+    def Process(sentence):
+        # Convert soup to string
+        sentence_html = str(sentence)
+        
+        # Handle cases where the kanji is inside <span class="hit">
+        def replacer(match):
+            furigana = match.group('f')
+            kanji = match.group('k_hit') or match.group('k_normal')  # Use <span class="hit"> if available, else normal kanji
+            return f"{kanji}[{furigana}]"
+
+        pattern = re.compile(
+            r'<li class="clearfix">\s*'
+            r'<span class="furigana">(?P<f>.*?)</span>\s*'
+            r'<span class="unlinked">(?:<span class="hit">(?P<k_hit>.*?)</span>|(?P<k_normal>.*?))</span>\s*'
+            r'</li>',
+            re.DOTALL
+        )
+
+        # Apply regex substitution
+        sentence_html = re.sub(pattern, replacer, sentence_html)
+
+        # Parse back to BeautifulSoup and extract plain text
+        sentence_soup = BeautifulSoup(sentence_html, 'html.parser')
+        return sentence_soup.get_text(separator=" ", strip=True)
+
     for i, meaning in enumerate(meanings):
-        meaning_text = meaning.find('span', class_='meaning-meaning')
-        meaning_text = meaning_text.text.strip() if meaning_text else None
+        meaning_text = meaning.find('span', class_='meaning-meaning') # Raw HTML
+        meaning_text = Filter(meaning_text) if meaning_text else None
+        meaning_info = meaning.find('span', class_='supplemental_info')
+        meaning_info = Filter(meaning_info) if meaning_info else None
+        meaning_ex = meaning.find('div', class_='sentence')
+        meaning_ex = Process(meaning_ex) if meaning_ex else None
+        ex_exist = _c(f"\n「{meaning_ex}」", "424242") if meaning_ex else ""
+        info_exist = _c(f"\n【 ", "e39a0c") + meaning_info + _c(f"】", "e39a0c") if meaning_info else ""
+
         tag_text = tags[i].text.strip() if i < len(tags) else None
         if meaning_text:
-            formatted_meaning = f"{meaning_text} ({tag_text})" if tag_text else meaning_text
+            formatted_meaning = f"{meaning_text} ({tag_text}){info_exist}{ex_exist}" if tag_text else meaning_text
             formatted_meanings.append(formatted_meaning)
     
     return formatted_meanings
@@ -692,14 +786,12 @@ async def run(Kanji, limit=20, method="c"):
     Scrape a Kanji, by *limit of page
     """
     # setup_console() # Fix smoe CMD unable to represent the japanese character.
-    
     # List of Vocabs with limit
     
     timeStartScraper = time.time()
     if method == "c": Scraper = paginationHandler.Concurrent(Kanji, limit)  # passing limit to paginationHandler
     elif method == "s": Scraper = paginationHandler.Sequential(Kanji, limit)  # passing limit to paginationHandler
     timeEndScraper = time.time()
-
     scraperTimeElapsed = timeEndScraper - timeStartScraper
 
     if not Scraper:
@@ -716,7 +808,7 @@ async def run(Kanji, limit=20, method="c"):
     
     while True:
         # Clear previous output
-        print("\033[H\033[J")
+        # print("\033[H\033[J")
         
         # Display current page items
         start_idx = current_page * paginationLimit
@@ -738,14 +830,14 @@ async def run(Kanji, limit=20, method="c"):
                     f"[blue]{i + 1}. {eVocab['Vocab']}[/]",
                     f"[blue]{eVocab['Furi']}[/]",
                     f"[blue]{eVocab['Tag']}[/]",
-                    f"[blue]{eVocab['Meaning']}[/]"
+                    f"[blue]{c_(eVocab['Meaning'])}[/]"
                 )
             else:
                 scrapedVocabularyTable.add_row(
                     f"{i + 1}. {eVocab['Vocab']}", 
                     f"{eVocab['Furi']}", 
                     f"{eVocab['Tag']}", 
-                    f"{eVocab['Meaning']}"
+                    f"{c_(eVocab['Meaning'])}"
                 )
         
         scrapedVocabularyConsole = Console()
@@ -777,11 +869,15 @@ Info: {kanji_scraped['Info']}
                 # Modify the Meaning to include <br> before each enumeration
                 formatted_meaning = re.sub(r'(\d+\.)', r'<br>\1', eVocab['Meaning'])
                 formatted_template = Template.format(
-                    KANJI=Kanji, 
+                    KANJI=Kanji,
+                    KANJI_ONYOMI=" "+kanji_scraped['Onyomi'][3:],
+                    KANJI_KUNYOMI=" "+kanji_scraped['Kunyomi'][4:], 
+                    KANJI_MEANING=kanji_scraped['Meaning'],
                     VOCAB=r"{{c1::"+eVocab['Vocab']+r"}}",
                     MEANING=r"{{c2::"+formatted_meaning+r"}}",
                     FURIGANA=r"{{c3::"+htmlReadable+r"}}",
-                    TAG=eVocab['Tag']
+                    TAG=eVocab['Tag'],
+                    STROKE=raw_svg
                 )
                 # Copy to clipboard and mark as copied
                 if VocabularyMethod == "m":
@@ -819,7 +915,7 @@ Info: {kanji_scraped['Info']}
             Log("Use <, >, _ to navigate or enter a number", "c")
 
 async def main():
-    global BaseUrl, Kanji
+    global BaseUrl, Kanji, raw_svg
     # a1 = Kanji, a2 = Total Pagination, a3 = Method
     if len(sys.argv) == 2:
         if sys.argv[1] == "-c" or sys.argv[1] == "--config":
@@ -915,23 +1011,28 @@ async def main():
         else:
             Kanji = sys.argv[1]
             BaseUrl = config['BaseUrl'].format(Kanji=Kanji)
+            raw_svg = await kanjiStrokeScrape(Kanji)
             await run(Kanji, 20)
     elif len(sys.argv) == 3:
         Kanji = sys.argv[1]
         Total = sys.argv[2]
         BaseUrl = config['BaseUrl'].format(Kanji=Kanji)
+        raw_svg = await kanjiStrokeScrape(Kanji)
         await run(Kanji, int(Total))
     elif len(sys.argv) == 4:
         Kanji = sys.argv[1]
         Total = sys.argv[2]
         Method = sys.argv[3]
         BaseUrl = config['BaseUrl'].format(Kanji=Kanji)
+        raw_svg = await kanjiStrokeScrape(Kanji)
         await run(Kanji, int(Total), Method)
     else:
         Kanji = inputKanji()
         BaseUrl = config['BaseUrl'].format(Kanji=Kanji)
         howmuch = int(input("Total page: ").strip())
+        raw_svg = await kanjiStrokeScrape(Kanji)
         await run(Kanji, howmuch)
+        
 
 if __name__ == "__main__":
     io.run(main())
