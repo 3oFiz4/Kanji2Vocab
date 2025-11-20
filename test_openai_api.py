@@ -28,7 +28,7 @@ def ResponseAI(input, prompt=""):
     final_input = f"""{prompt}\n---\n{input}""" if prompt else input
     try:
         client = openai.OpenAI(
-        api_key="q72XRQ127c8EX-zqLBOOqMADU7ED7NuLiNPzJAJr7Zg",
+        api_key="q72XRQ127cGEX-zqLXBOqMTDU7E67NuLiNPzJAJr7Zg",
         base_url="https://api.poe.com/v1",)
         
         chat = client.chat.completions.create(
