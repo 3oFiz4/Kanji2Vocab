@@ -16,10 +16,13 @@ from rich import print as color_print
 from threading import Lock
 import concurrent.futures
 import random
-# import orjson
+import openai
 import aiohttp as aio
 import asyncio as io
-
+from itertools import cycle
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
 '''
 To-Do:
@@ -69,7 +72,7 @@ AnkiModelVocabulary = config['AnkiModelVocabulary']
 AnkiModelKanji = config['AnkiModelKanji']
 VocabularyMethod = config['VocabularyMethod']
 isColored = config['isColored']
-
+isAutomatic = config['isAutomatic']
 # ----------------- P R O G R A M --------------------------------------
 kanji_scraped = None
 raw_svg = None
@@ -133,9 +136,9 @@ class Anki:
                 result = await self.anki_connect.invoke("addNote", note=note)
                 print(result)
                 if result is not None:
-                    Log(f"Note created in '{AnkiDeck}'.", 's')
+                    return True
                 else:
-                    Log("Failure (is it a duplicate?)", 'f')
+                    return False
             except Exception as e:
                 Log(f"An error occurred: {str(e)}", 'f')
 
@@ -145,6 +148,75 @@ anki = Anki.POST(anki_interact)
 if anki_interact and anki:
     print("AnkiAPI Connected")
 
+class APIKey:
+    """
+    continuously cycle through a list of API keys.
+    """
+    def __init__(self, key_prefixes: list, key_format="API_KEY_{}"):
+        """
+        Works by fetching key values from environment variables.
+        
+        Args:
+            key_prefixes: A list of indices or identifiers (e.g., [0, 1, 2]). -> This means there is API_KEY_0, API_KEY_1, API_KEY_2
+            key_format: The format string for the environment variable name.
+        """
+        # Build the list of actual key values by looking them up in os.environ
+        key_list = []
+        for prefix in key_prefixes:
+            key_name = key_format.format(prefix)
+            key_value = os.getenv(key_name)
+            if key_value:
+                key_list.append(key_value)
+            else:
+                Log(f"Warning: Environment variable {key_name} not found.", "e")
+
+        if not key_list:
+            raise ValueError("No valid API keys were loaded.")
+
+        # Create a cycling iterator that will rotate through the keys indefinitely
+        self.keys = cycle(key_list)
+        # Store the current key for easy access
+        self.current_key = next(self.keys)
+
+    def rotate(self) -> str:
+        """
+        Rotates to next key in the sequence and returns it.
+        """
+        self.current_key = next(self.keys)
+        return self.current_key
+
+    def this(self) -> str:
+        """
+        Returns the current active key.
+        """
+        return self.current_key
+ai_key = APIKey([0, 1])
+
+def ResponseAI(input, prompt=""):
+    if input == "":
+        return "No input given"
+    final_input = f"""{prompt}\n---\n{input}""" if prompt else input
+    client = openai.OpenAI(
+    api_key=ai_key.this(),
+    base_url=os.getenv("AI_URL"),)
+    
+    try:
+        chat = client.chat.completions.create(
+            model=os.getenv("AI_MODEL"),
+            messages=[{"role": "user", "content": final_input}],
+        )
+    except Exception as e:
+        return e 
+    return chat.choices[0].message.content
+
+
+def update_kanji(kanji_char):
+    global hasLearned, config
+    if kanji_char not in hasLearned:
+        hasLearned.append(kanji_char)
+        config['hasLearned'] = ''.join(hasLearned)
+        with open('config.json', 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=4, ensure_ascii=False)
 
 def inputKanji():
     while True:
@@ -249,7 +321,10 @@ def shortifyMeaning(Meaning):
         'Usually written using kana alone , as': _c("KANA AS:", "ff1493"),
         'Usually written using kana alone': _c("KANA", "ff1493"),
         'Antonym:': 'ANT:',
-        'esp.': 'ESP:'
+        'esp.': 'ESP:',
+        'Auxiliary verb': _c('v-AUX', "ff0094"),
+        'after the -masu stem of a verb': _c('v-ます', "ff0094"),
+        'after the -te form of a verb': _c('v-て', "ff0094")
     }
     
 
@@ -778,141 +853,302 @@ Info: {kanji_scraped['Info']}
             resultsMerge.extend(results)
 
         return resultsMerge
-
+def normalize_jp(s):
+    # remove HTML tags
+    s = re.sub(r'<[^>]+>', '', s)
+    # remove bracketed furigana [お]
+    s = re.sub(r'\[[^\]]+\]', '', s)
+    # remove spaces between Japanese chars
+    s = re.sub(r'(?<=\w)\s+(?=\w)', '', s)
+    # collapse newlines
+    s = s.replace("\n", "")
+    return s
 async def run(Kanji, limit=20, method="c"):
     """
     Require $Kanji, *limit
 
-    Scrape a Kanji, by *limit of page
+    Scrape a Kanji by *limit of pages, allow the user to select vocabulary items,
+    then batch-process the selected ones by requesting extra Kanji explanations via an API.
     """
-    # setup_console() # Fix smoe CMD unable to represent the japanese character.
-    # List of Vocabs with limit
-    
     timeStartScraper = time.time()
-    if method == "c": Scraper = paginationHandler.Concurrent(Kanji, limit)  # passing limit to paginationHandler
-    elif method == "s": Scraper = paginationHandler.Sequential(Kanji, limit)  # passing limit to paginationHandler
+    if method == "c":
+        Scraper = paginationHandler.Concurrent(Kanji, limit)
+    elif method == "s":
+        Scraper = paginationHandler.Sequential(Kanji, limit)
     timeEndScraper = time.time()
     scraperTimeElapsed = timeEndScraper - timeStartScraper
 
     if not Scraper:
         Log("Nil.", "f")
         return
-    
+
     # Pagination settings    
-    paginationLimit = PaginationLimit  # number of items per page
+    paginationLimit = PaginationLimit
+    # Detect duplicates and remove them.
+    # (im not even sure why the vocab contain duplicate...)
+    seen_vocabs = set()
+    unique_scraper = []
+    for item in Scraper:
+        vocab = item.get('Vocab')
+        if vocab and vocab not in seen_vocabs:
+            unique_scraper.append(item)
+            seen_vocabs.add(vocab)
+    Scraper = unique_scraper
     total_items = len(Scraper)
     current_page = 0
     total_pages = (total_items + paginationLimit - 1) // paginationLimit
-    
+
+    # Set to store selected vocabulary
     selectedVocabulary = set()
     
-    while True:
-        # Clear previous output
-        # print("\033[H\033[J")
-        
-        # Display current page items
-        start_idx = current_page * paginationLimit
-        end_idx = min(start_idx + paginationLimit, total_items)
-        
-        scrapedVocabularyTable = Table(caption=f"Scraped Vocabulary\nPage {current_page + 1} of {total_pages}\nItems {current_page * paginationLimit + 1}-{min((current_page + 1) * paginationLimit, total_items)} of {total_items}\nTime Taken: {scraperTimeElapsed}", show_lines=True)
+    #  AUTOMATIC MODE: Select all items and skip UI. Much faster since code assumes EVERY VOCABULARY.
+    if isAutomatic:
+        selectedVocabulary = set(range(total_items))
+    # INTERACTIVE MODE: Select items manually, does not skip UI. Much slower since you ARE deciding.
+    else:
+        while True:
+            # Display current page items
+            start_idx = current_page * paginationLimit
+            end_idx = min(start_idx + paginationLimit, total_items)
 
-        scrapedVocabularyTable.add_column("Vocab", justify="center", style="cyan bold")
-        scrapedVocabularyTable.add_column("Furigana", style="#00ffff i")
-        scrapedVocabularyTable.add_column("Tag", justify="center", style="purple")
-        scrapedVocabularyTable.add_column("Meaning", justify="center", style="#00ff00 bold")
+            scrapedVocabularyTable = Table(
+                caption=(f"Scraped Vocabulary\nPage {current_page + 1} of {total_pages}"
+                         f"\nItems {start_idx + 1}-{end_idx} of {total_items}"
+                         f"\nTime Taken: {scraperTimeElapsed}"),
+                show_lines=True
+            )
+            scrapedVocabularyTable.add_column("Vocab", justify="center", style="cyan bold")
+            scrapedVocabularyTable.add_column("Furigana", style="#00ffff i")
+            scrapedVocabularyTable.add_column("Tag", justify="center", style="purple")
+            scrapedVocabularyTable.add_column("Meaning", justify="center", style="#00ff00 bold")
 
-        # Enumerated vocabulary items
-        for i in range(start_idx, end_idx):
-            eVocab = Scraper[i]
-            # Change style if vocabulary was previously copied
-            if i in selectedVocabulary:
-                scrapedVocabularyTable.add_row(
-                    f"[blue]{i + 1}. {eVocab['Vocab']}[/]",
-                    f"[blue]{eVocab['Furi']}[/]",
-                    f"[blue]{eVocab['Tag']}[/]",
-                    f"[blue]{c_(eVocab['Meaning'])}[/]"
-                )
-            else:
-                scrapedVocabularyTable.add_row(
-                    f"{i + 1}. {eVocab['Vocab']}", 
-                    f"{eVocab['Furi']}", 
-                    f"{eVocab['Tag']}", 
-                    f"{c_(eVocab['Meaning'])}"
-                )
-        
-        scrapedVocabularyConsole = Console()
-        
-        scrapedVocabularyConsole.print(scrapedVocabularyTable)
-        scrapedVocabularyConsole.rule("[bold #00ff00]Separator")
-        # Navigation and copy instructions
-        Log("\nNavigation: < (previous) | > (next) | _ (exit)")
-        Log("To copy a vocabulary item, enter its number")
-        Log(f"""Target Kanji: {Kanji}
+            # List vocabulary
+            for i in range(start_idx, end_idx):
+                eVocab = Scraper[i]
+                if i in selectedVocabulary:
+                    scrapedVocabularyTable.add_row(
+                        f"[blue]{i + 1}. {eVocab['Vocab']}[/]",
+                        f"[blue]{eVocab['Furi']}[/]",
+                        f"[blue]{eVocab['Tag']}[/]",
+                        f"[blue]{c_(eVocab['Meaning'])}[/]"
+                    )
+                else:
+                    scrapedVocabularyTable.add_row(
+                        f"{i + 1}. {eVocab['Vocab']}",
+                        f"{eVocab['Furi']}",
+                        f"{eVocab['Tag']}",
+                        f"{c_(eVocab['Meaning'])}"
+                    )
+
+            scrapedVocabularyConsole = Console()
+            scrapedVocabularyConsole.print(scrapedVocabularyTable)
+            scrapedVocabularyConsole.rule("[bold #00ff00]Separator")
+
+            # Navigation
+            Log("\nNavigation: < (previous) | > (next) | _ (finish selection)", "_")
+            Log("To select a vocabulary item for batch processing, enter its number", "i")
+            Log(f"""Target Kanji: {Kanji}
 Onyomi: {kanji_scraped['Onyomi']}
 Kunyomi: {kanji_scraped['Kunyomi']}
 Meaning: {kanji_scraped['Meaning']}
 Info: {kanji_scraped['Info']}
-                        """)
-        command = input("Enter command or number: ").strip()
-        
-        if command == "<":
-            current_page = max(0, current_page - 1)
-        elif command == ">":
-            current_page = min(total_pages - 1, current_page + 1)
-        elif command == "_":
-            break
-        elif command.isdigit():
-            index = int(command) - 1
-            if 0 <= index < total_items:
-                eVocab = Scraper[index]
-                htmlReadable = cvHTML(eVocab['Furi'])
-                # Modify the Meaning to include <br> before each enumeration
-                formatted_meaning = re.sub(r'(\d+\.)', r'<br>\1', eVocab['Meaning'])
-                formatted_template = Template.format(
+""", "_")
+
+            command = input("Enter command or number: ").strip()
+            # Back
+            if command == "<":
+                current_page = max(0, current_page - 1)
+            # Next
+            elif command == ">":
+                current_page = min(total_pages - 1, current_page + 1)
+            # Kanji Form
+            elif command.lower() in ["k", "kanji"]:
+                formatted_template = TemplateKanji.format(
                     KANJI=Kanji,
-                    KANJI_ONYOMI=" "+kanji_scraped['Onyomi'][3:],
-                    KANJI_KUNYOMI=" "+kanji_scraped['Kunyomi'][4:], 
-                    KANJI_MEANING=kanji_scraped['Meaning'],
-                    VOCAB=r"{{c1::"+eVocab['Vocab']+r"}}",
-                    MEANING=r"{{c2::"+formatted_meaning+r"}}",
-                    FURIGANA=r"{{c3::"+htmlReadable+r"}}",
-                    TAG=eVocab['Tag'],
-                    STROKE=raw_svg
+                    MEANING=kanji_scraped['Meaning'],
+                    ONYOMI=" " + kanji_scraped['Onyomi'][3:],
+                    KUNYOMI=" " + kanji_scraped['Kunyomi'][4:],
+                    INFO=kanji_scraped['Info']
                 )
-                # Copy to clipboard and mark as copied
                 if VocabularyMethod == "m":
                     copier.copy(formatted_template)
-                    selectedVocabulary.add(index)
                     Log("Recorded to clipboard", "s")
                 else:
                     io.create_task(anki.NoteCreate({
-                        "Content": formatted_template,
-                    }, AnkiModelVocabulary))
-                    selectedVocabulary.add(index)
+                        "Kanji": Kanji,
+                        "Keyword": kanji_scraped['Meaning'].replace(f"({Kanji})", ""),
+                        "Story": formatted_template,
+                    }, AnkiModelKanji))
                     Log("Recorded to Anki (AnkiConnect)", "s")
+            # Exit 
+            elif command == "_":
+                break
+            # Select All, and Exit.
+            elif command == "." or command == "all":
+                selectedVocabulary = set(range(total_items))
+                break
+            # Select vocab by index.
+            elif command.isdigit():
+                index = int(command) - 1
+                if 0 <= index < total_items:
+                    selectedVocabulary.add(index)
+                    Log(f"Vocabulary {index + 1} selected for batch processing", "s")
+                else:
+                    Log("Invalid number. Enter a valid vocabulary number.", "c")
+            # Non-command
             else:
-                Log("Invalid number. Enter a valid vocabulary number.", "c")
-        elif command == "k" or command == "kanji":
-            formatted_template = TemplateKanji.format(
-                    KANJI=Kanji, 
-                    MEANING=kanji_scraped['Meaning'],
-                    ONYOMI=" "+kanji_scraped['Onyomi'][3:],
-                    KUNYOMI=" "+kanji_scraped['Kunyomi'][4:],
-                    INFO=kanji_scraped['Info']
-                )
-                # Copy to clipboard
-            if VocabularyMethod == "m":
-                copier.copy(formatted_template)
-                Log("Recorded to clipboard", "s")
+                Log("Use <, >, _ to navigate or enter a number", "c")
+
+    # AFTER SELECTION → Batch Processing
+    if not selectedVocabulary:
+        Log("No vocabulary selected. Exiting.", "c")
+        return
+
+    # Build a list of kanji (using the 'Vocab' from each selected item) separated by ###
+    sorted_indices = sorted(selectedVocabulary)
+    selected_kanji_list = [Scraper[i]['Vocab'] for i in sorted_indices]
+    joined_kanji = "#".join(selected_kanji_list)
+
+    # Construct the prompt for the API request
+    prompt_text = (
+    "For each Vocabulary in the list (separated by #), output only in the EXACT format below. "
+    "No extra text, no deviations, no missing sections.\n\n"
+    "=== OUTPUT TEMPLATE START {DO NOT INCLUDE THIS LINE, THIS EXIST AS AN SHOWCASE HOW IT SHOULD BE DONE, NOT AS A PART OF THE TEMPLATE}===\n"
+    "# <Vocabulary {BY EACH # IN VOCABULARY LIST, DO NOT CONFUSE THIS AS EACH KANJI IN A SINGLE VOCABULARY}>\n"
+    "[Semantic]\n"
+    "<Exact two-paragraph explanation of the core meaning, "
+    "including subtle distinctions/difference from similar Vocabulary compound and vocabulary with close meanings (Example: The differences between '返答' and '応答'). This is required. "
+    "Mention how it differs in nuance, strength, or scope compared to at least 3-10 similar words if applicable.>\n"
+    "[Context]\n"
+    "<Exact two-paragraph explanation of typical usage and nuance in modern Japanese, "
+    "including when it is chosen over synonyms. Provide 1–2 short example sentences with Furigana and Meaning. "
+    "If the Kanji (of the Vocabulary) often appears in other compounds kanji, explain how the combined kanji meanings form the compound makes sense."
+    "Example: 受 (accept) + 取 (fetch) = 受け取る (to receive, to accept physically or figuratively).>\n"
+    "[Component]\n"
+    "<Exact two-paragraph explanation of (each) kanji component of the Vocabulary, "
+    "including the derivation from Hanzi if possible, and how each component relate to each other in order to create the meaning, and an analogy of how to memorize it with mnemonics (visualization)>\n"
+    "=== OUTPUT TEMPLATE END {DO NOT FUCKING INCLUDE THIS LINE, THIS EXIST AS AN SHOWCASE HOW IT SHOULD BE DONE, NOT AS A PART OF THE TEMPLATE. FUCKING NOTE THIS PIECE OF SHIT.}===\n\n"
+    "Rules:\n"
+    "- The Vocabulary in the given list (separated by #) sometimes can be only 2, to 3 vocabularies. THAT DOES NOT MEAN THAT YOU ONLY ADD ONE VOCABULARY. ADD EACH OF THEM, SEPARATED BY #. NO MATTER, HOW MANY VOCABULARIES INSIDE.`"
+    "- Keep each [Semantic] and [Context] section concise but complete.\n"
+    "- Always compare with at least one near-synonym if relevant. This is a must. You need to find other compound kanji or vocabulary with a similar meaning, or a meaning that learner often confused.\n"
+    "- USE ENGLISH\n"
+    "- Always explain compound meaning formation in a 'make sense' way, if the kanji (of the vocabulary) appears in common compounds. Analogy may be used otherwise.\n"
+    "- Maintain section order, headings, and formatting for every kanji.\n"
+    "- Concise, To the Point\n"
+    "- THERE CANNOT AND SHOULD NOT BE SAME KANJI IN '# <Vocabulary>'. AVOID THIS\n"
+    "- IN EVERY KANJI IN '# <Vocabulary>' IT SHOULD BE ACCORDINGLY WITHIN VOCABULARY LIST\n"
+    "- Explain each kanji's component (of the Vocabulary), if it's a single kanji (non-compound), and retain the same explanation (copy and paste) in every other compound kanji's explanation"
+    "Shorten (each and other) explanation, just because the information in other explanation is needed"
+    "- Never skip sections even if information overlaps.\n\n"
+    "Vocabulary list: " + joined_kanji
+    )
+    
+    # [Test Log]
+    # Log(f"[#aaaaaa][LOG] {prompt_text}[/]", "_")
+    # return
+    
+    c = Console()
+    # Error Detection Pattern and Fix.
+    with Live(console=c, screen=False) as LogL:
+        while True:
+            api_response = ResponseAI(joined_kanji, prompt=prompt_text)
+            if "402" in str(api_response):
+                retry = 0
+                Log(f"[#f00][API ERROR] (0 Kuota). Rotating to next key...[/]")
+                ai_key.rotate()
+                retry += 1
+                continue
+            elif str(api_response).startswith("?!"):
+                Log(f"[#f00][FATAL API ERROR]:\n{api_response}\n---[/]")
+            # ERROR CHECKING. This error orginates from the model itself.
+            VBX_OUTLIER = re.findall(r"===(.+)", api_response, flags=re.MULTILINE) # Checks if outlier gets in as well.
+            VBX_OUTLIER_2 = re.findall(r"{(.+)", api_response, flags=re.MULTILINE) # Checks if outlier gets in as well.
+            useless_label = r"<(?:Vocabulary\s*)+(.+?)>"
+            VBX_USELESS_LABEL = re.findall(useless_label, api_response, flags=re.MULTILINE)
+            LogL.update("Output checking...")
+            if VBX_USELESS_LABEL or re.search(r"Vocabulary\s+.+?", api_response):
+                api_response = re.sub(r"<(?:Vocabulary\s*)+(.+?)>", r"\1", api_response, flags=re.DOTALL) 
+                api_response = re.sub(r"^(?:Vocabulary\s*)+(.+?)$", r"\1", api_response, flags=re.MULTILINE)
+                LogL.update(api_response)
+                Log(f"[#af0][MODEL CORRECTION]: Removing useless label.[/]")
+            if VBX_OUTLIER or VBX_OUTLIER_2: 
+                api_response = re.sub(r"===(.+)", "", api_response, flags=re.DOTALL) # Clean.
+                api_response = re.sub(r" {(.+)", "", api_response, flags=re.DOTALL) # Clean. 
+                LogL.update(api_response)
+                Log(f"[#af0][MODEL CORRECTION]: Outlier.[/]")
+            VBX_ALIGN = re.findall(r"^#\s*([^\n]+)", api_response, flags=re.MULTILINE) # Checks if each vocabulary in '#' aligned.
+            VBX_EXPECTED = joined_kanji.split('#') # Vocabulary in given prompt
+            if VBX_ALIGN == VBX_EXPECTED: 
+                LogL.update(f"\n\n[#0f0] Error Fixed.[/]", refresh=True)
+                break
             else:
-                io.create_task(anki.NoteCreate({
-                    "Kanji": Kanji,
-                    "Keyword": kanji_scraped['Meaning'].replace(f"({Kanji})", ""),
-                    "Story": formatted_template,
-                }, AnkiModelKanji))
-                Log("Recorded to Anki (AnkiConnect)", "s")
+                LogL.update(f"\n\n[#f00][FATAL ERROR]: Disaligned. (Expecting {VBX_EXPECTED} got {VBX_ALIGN} instead[/])")
+    Log(api_response)
+    Log(f"If there is something wrong with the AI response, quickly press <C-c> to disband and reset AI response, else ignore.\nProgram will continue in 3 seconds")
+    time.sleep(5)
+    # Parse the API response assuming explanations are separated by ###
+    explanation_list = [piece.strip() for piece in api_response.split("#") if piece.strip()]
+    
+    # For each selected vocabulary, append the API explanation to its Meaning and send to Anki
+    for idx, explanation in zip(sorted_indices, explanation_list):
+        eVocab = Scraper[idx]
+        htmlReadable = cvHTML(eVocab['Furi'])
+        formatted_meaning = re.sub(r'(\d+\.)', r'<br>\1', eVocab['Meaning'])
+        original_vocab = eVocab['Vocab']
+
+        # Format 1: Re-format [Semantic] part to Red Color 
+        explanation = re.sub(r'(\[Semantic\])\s+(.+)', r'<p style="color:red;text-shadow: #ff0000aa 0 0 25px">\1<br>\2</p>', explanation, flags=re.DOTALL)
+        # Format 2: Re-format [Context] part to Purple Color
+        explanation = re.sub(r'(\[Context\])\s+(.+)', r'<p style="color:#ff00ff;text-shadow: #ff00ffaa 0 0 25px">\1<br>\2</p>', explanation, flags=re.DOTALL)
+        # Format 3: Re-format [Component] part to Lime Color 
+        explanation = re.sub(r'(\[Component\])\s+(.+)', r'<p style="color:lime;text-shadow: #00ff00aa 0 0 25px">\1<br>\2</p>', explanation, flags=re.DOTALL)
+        updated_meaning = formatted_meaning + "<br><br>" + explanation
+        # Format: Replace @Kanji in Meaning, with XYZ
+        # Censor original_vocab in updated_meaning with as many letters from 'XYZ...' as the vocab's length
+        vocab_len = len(original_vocab)
+        censor_letters = "XYZABCDEFGHIJKLMNOPQRSTUVW"[0:vocab_len]
+        updated_meaning = re.sub(re.escape(original_vocab), censor_letters, updated_meaning)
+        # --- find the last parenthetical group (if any) and check for v5 / v1 ---
+        parens = re.findall(r'\(([^)]*)\)', formatted_meaning)
+        last_par = parens[-1] if parens else ""
+        colored_vocab = ""
+        if re.search(r'v5', last_par, re.IGNORECASE):
+            # color last char cyan
+            if original_vocab:
+                colored_vocab = original_vocab[:-1] + f'<span style="color:cyan">{original_vocab[-1]}</span>'
+            else:
+                colored_vocab = original_vocab
+        elif re.search(r'v1', last_par, re.IGNORECASE):
+            # color last char red
+            if original_vocab:
+                colored_vocab = original_vocab[:-1] + f'<span style="color:red">{original_vocab[-1]}</span>'
+            else:
+                colored_vocab = original_vocab
         else:
-            Log("Use <, >, _ to navigate or enter a number", "c")
+            colored_vocab = original_vocab
+        formatted_template = Template.format(
+        KANJI=Kanji,
+        KANJI_ONYOMI=" " + kanji_scraped['Onyomi'][3:],
+        KANJI_KUNYOMI=" " + kanji_scraped['Kunyomi'][4:],
+        KANJI_MEANING=kanji_scraped['Meaning'],
+        VOCAB=r"{{c1::" + colored_vocab + r"}}",
+        MEANING=r"{{c2::" + updated_meaning + r"}}",
+        FURIGANA=r"{{c1::" + htmlReadable + r"}}",
+        TAG=eVocab['Tag'],
+        STROKE=raw_svg
+        )
+
+        vbx_number = str(idx)
+
+        if VocabularyMethod == "m":
+            copier.copy(formatted_template)
+            Log(f"VBX #{vbx_number} COPIED successfully (Confirmed)", "s")
+        else:
+            io.create_task(anki.NoteCreate({
+                "Content": formatted_template,
+            }, AnkiModelVocabulary))
+            Log(f"VBX #{idx + 1} recorded", "s")
 
 async def main():
     global BaseUrl, Kanji, raw_svg
@@ -1009,18 +1245,23 @@ async def main():
         if sys.argv[1] == "-h" or sys.argv[1] == "--help":
             Log("Command list:\n1. -c/--config | To modify config.json\n2. Kanji2Vocab.py [KANJI] [TOTAL_PAGINATION] [PAGE_SCRAPE_METHOD]\n | [KANJI] = Requires any Kanji\n | [TOTAL_PAGINATION] = Require an integer\n | [PAGE_SCRAPE_METHOD] = Either s or c, s = Sequential (one-by-one), c = Concurrent (all-together), default = s\n\nCredit:[#00ffff bold]3oFiz4[/] (Discord, Instagram)", "_")
         else:
-            Kanji = sys.argv[1]
-            BaseUrl = config['BaseUrl'].format(Kanji=Kanji)
-            raw_svg = await kanjiStrokeScrape(Kanji)
-            await run(Kanji, 20)
+            chars = sys.argv[1]
+
+            for Kanji in chars:
+                update_kanji(Kanji)
+                BaseUrl = config['BaseUrl'].format(Kanji=Kanji)
+                raw_svg = await kanjiStrokeScrape(Kanji)
+                await run(Kanji, 20)
     elif len(sys.argv) == 3:
         Kanji = sys.argv[1]
+        update_kanji(Kanji)
         Total = sys.argv[2]
         BaseUrl = config['BaseUrl'].format(Kanji=Kanji)
         raw_svg = await kanjiStrokeScrape(Kanji)
         await run(Kanji, int(Total))
     elif len(sys.argv) == 4:
         Kanji = sys.argv[1]
+        update_kanji(Kanji)
         Total = sys.argv[2]
         Method = sys.argv[3]
         BaseUrl = config['BaseUrl'].format(Kanji=Kanji)
@@ -1028,6 +1269,7 @@ async def main():
         await run(Kanji, int(Total), Method)
     else:
         Kanji = inputKanji()
+        update_kanji(Kanji)
         BaseUrl = config['BaseUrl'].format(Kanji=Kanji)
         howmuch = int(input("Total page: ").strip())
         raw_svg = await kanjiStrokeScrape(Kanji)
