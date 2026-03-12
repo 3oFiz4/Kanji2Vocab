@@ -8,7 +8,7 @@ This program are and have NOT served for others, since I never had the intent to
 I might turn this into a open-source program when I have time.
 
 ## Code Template
-
+**This is important! Or else you'll get a bug where the code repeatedly trying to rotate API keys! Because there's null! So no point of trying**
 ```.env
 AI_URL = "openai end point url"
 AI_MODEL = "gpt-4.1-nano"
@@ -18,18 +18,22 @@ API_KEY_1 = "jFn....Jw"
 
 ## Requirement
 ```
-requests, pyperclip, beautifulsoup4, rich, openai, aiohttp, dotenv 
+requests pyperclip beautifulsoup4 rich openai aiohttp dotenv 
 ```
 
-## To-Do
-To-Do:
+## Changelog
+- [x] <RECENT> The whole program is revamped into OOP version for clear structure (unfinished, but can be used otherwise.)
 - [x] Add a Tag for each Vocabulary in Pagination (e.g. N5, N4, N3, WN29, WN29-20, CMN)
 - [x] Add a Shortener for the formatted meaning (e.g. Suru verb => (suru), Na-Adjective => (な), Adverb => (ADV))
-- [ ] Add a search system in Pagination, that able to search meaning, furigana, kanji, or even tags
-- [ ] Add a filter system that filters the tag
-- [ ] Add a Hiragana-Katakana converter if a certain Vocabulary are confirmed as by their Onyomi
-- [ ] Add an extended configuration, editable Template, editable hasLearned
+- [x] Improve Scrapper (optional) = Modified to use LXML, scrape Kanji also, i guess thats an improvement XD
+- [x] Add an API integration with an AI Chatbot to automatically creates a Spoiler, and contextual usage of a vocabulary (optional)
+- [x] Add stroke drawing (optional)
+- [x] Add colored for some tags and info
+- [x] Add example sentence
 - [x] Add a CMD GUI (ex. below)
+- [x] Add a system when a certain meaning has an example.
+- [x] Improve Pagination system so instead of `NTH. [VOCAB] ([FURIGANA])\n=>[MEANING]` it has a table generated (Clue: Use Rich).
+- [x] Show more logs, such as (total vocabs scraped per page)
 ```
 Kanji2Vocab
 1. Search Vocab (type. 1[KANJI], ex: 1何)
@@ -38,20 +42,15 @@ Kanji2Vocab
 4. Exit
 ```
 
-- [x] Add a system when a certain meaning has an example.
-- [x] Improve Pagination system so instead of `NTH. [VOCAB] ([FURIGANA])\n=>[MEANING]` it has a table generated (Clue: Use Rich).
-- [x] Show more logs, such as (total vocabs scraped per page)
+**To-Dos:**
+- [ ] <RECENT> Make more elaborating comment and structure diagram to explain OOP structure.
 - [ ] Make code more readable and less messy :) (already messy btw, so whats the point?)
-- [x] Improve Scrapper (optional) = Modified to use LXML, scrape Kanji also, i guess thats an improvement XD
-- [x] Add an API integration with an AI Chatbot to automatically creates a Spoiler, and contextual usage of a vocabulary (optional)
-- [x] Add stroke drawing (optional)
-- [x] Add colored for some tags and info
-- [x] Add example sentence
 - [ ] Add spelling sound
 - [ ] Add pitch accent marker
 - [ ] Improve example
-
-Additional Idea:
-Accomodate Kanji(forgot the name ;-; ) which accomodate more examples, and kanji info.
+- [ ] Add a search system in Pagination, that able to search meaning, furigana, kanji, or even tags
+- [ ] Add a filter system that filters the tag
+- [ ] Add a Hiragana-Katakana converter if a certain Vocabulary are confirmed as by their Onyomi
+- [ ] Add an extended configuration, editable Template, editable hasLearned
 
 
