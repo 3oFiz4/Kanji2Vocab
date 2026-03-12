@@ -16,6 +16,13 @@ API_KEY_0 = "q72....Zg"
 API_KEY_1 = "jFn....Jw"
 ```
 
+<details>
+  <summary>
+    Recommendation regarding AI Model:
+  </summary>
+  Since the prompt being used is lengthy. It is recomemnded to use LLM Model with high IF (Instruction Following) score. Therefore, you are unlikely to see the program repeating by itself trying to align the prompt position. Avoid using gpt-4.1-nano. Use something likw gpt-5-mini-high, gpt-5.3-instant, or gpt-5-nano-high
+</details>
+
 ## Requirement
 ```
 requests pyperclip beautifulsoup4 rich openai aiohttp dotenv 
