@@ -1,0 +1,62 @@
+kanji2vocab/
+│
+├── main.py
+│
+├── core/
+│   ├── run_pipeline.py
+│   └── selection_ui.py
+│
+├── scraping/
+│   ├── scraper.py
+│   ├── pagination.py
+│   ├── kanji_scraper.py
+│   └── stroke_scraper.py
+│
+├── processing/
+│   ├── vocab_filter.py
+│   ├── meaning_formatter.py
+│   ├── tag_shortener.py
+│   ├── color_parser.py
+│   └── japanese_utils.py
+│
+├── integrations/
+│   ├── anki_connect.py
+│   ├── ai_client.py
+│   └── api_key_rotator.py
+│
+├── utils/
+│   ├── logger.py
+│   ├── html_tools.py
+│   └── text_normalizer.py
+│
+├── config/
+│   └── config_loader.py
+│
+└── models/
+    └── vocab.py
+
+--- (sample.py)
+kanji2vocab/
+│
+├── models/
+│   ├── kanji_info.py
+│   ├── vocabulary_entry.py
+│   └── scrape_page_result.py
+│
+├── services/
+│   ├── logger_service.py
+│   ├── scraper_service.py
+│   ├── vocab_service.py
+│   └── openai_service.py
+│
+├── config/
+│   └── app_config.py
+│
+├── utils/
+│   ├── text_formatter.py
+│   └── jp_utils.py
+│
+├── pipeline/
+│   └── vocab_pipeline.py
+│
+└── main.py
