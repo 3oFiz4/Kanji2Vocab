@@ -1,0 +1,3 @@
+AI_URL = "https://open.ai/api/v1"
+AI_MODEL = "openai/gpt-4.1-nano"
+API_KEY_0 = "12345sixseven890"

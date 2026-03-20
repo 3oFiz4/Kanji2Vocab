@@ -1,1 +1,14 @@
+<<<<<<< HEAD
 .env
+=======
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+>>>>>>> 0ba715b (Revamped into OOP (unfinished))
