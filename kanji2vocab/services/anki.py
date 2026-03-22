@@ -1,6 +1,8 @@
 # file: kanji2vocab/services/anki.py
 import asyncio
 import requests
+import os
+import base64
 from .logger import Logger
 
 
@@ -49,11 +51,32 @@ class AnkiClient:
         # Assign new deck name.
         self.deck_name = deck_name
 
-    async def add_note(self, fields: dict, model: str, tags: list[str] | None = None) -> bool:
+    async def add_note(self, fields: dict, model: str, audio_path=None, audio_field=None, tags: list[str] | None = None) -> bool:
         """Create a note in Anki using AnkiConnect."""
         # Validate fields presence.
         if not fields:
             raise ValueError("Should at least contain one field.")
+
+        # Original Code from: kanji2Immersion/request.py:
+        # ---- AUDIO HANDLING ----
+        if audio_path:
+            if not os.path.isfile(audio_path):
+                raise FileNotFoundError(f"Invalid audio file: {audio_path}")
+
+            filename = os.path.basename(audio_path)
+
+            with open(audio_path, "rb") as f:
+                audio_base64 = base64.b64encode(f.read()).decode("utf-8")
+
+            media_result = await self.anki_connect.invoke(
+                "storeMediaFile",
+                filename=filename,
+                data=audio_base64,
+            )
+
+            print("MEDIA RESULT:", media_result)
+
+            fields[audio_field] = f"[sound:{filename}]"
 
         # Build note payload.
         note = {

@@ -217,6 +217,8 @@ class AppController:
                         f"\n\n[#f00][FATAL ERROR]: Disaligned. (Expecting {expected} got {re.findall(r'^#\\s*([^\\n]+)', response_text, flags=re.MULTILINE)} instead[/])"
                     )
 
+    # async def _request_ai_audio(self, past_vocab_list, vocab_list): # @A
+
     def _format_explanation_sections(self, explanation: str) -> str:
         """Apply HTML color styles to AI explanation sections."""
         # Colorize [Semantic] section.

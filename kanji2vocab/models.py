@@ -23,6 +23,7 @@ class AppConfig:
     is_colored: bool = True
     is_automatic: bool = False
     is_ai: bool = True
+    is_audio: bool = True
     extra: dict[str, Any] = field(default_factory=dict)
     
     #TODO: Add additional configuration for others. e.g., isAI
@@ -49,6 +50,7 @@ class AppConfig:
         is_colored = raw.pop("isColored", True)
         is_automatic = raw.pop("isAutomatic", False)
         is_ai = raw.pop("isAi", True)
+        is_audio = raw.pop("isAudio", True)
 
         # Normalize has_learned into a list of characters.
         if isinstance(has_learned, list):
@@ -76,6 +78,7 @@ class AppConfig:
             is_colored=is_colored,
             is_automatic=is_automatic,
             is_ai=is_ai,
+            is_audio=is_audio,
             extra=extra
         )
 
@@ -97,7 +100,8 @@ class AppConfig:
             "VocabularyMethod": self.vocab_method,
             "isColored": self.is_colored,
             "isAutomatic": self.is_automatic,
-            "isAi": self.is_ai
+            "isAi": self.is_ai,
+            "isAudio": self.is_audio
         }
 
         # Merge extra keys, letting known keys override if conflicts exist.

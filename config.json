@@ -13,5 +13,6 @@
     "VocabularyMethod": "a",
     "isColored": true,
     "isAutomatic": false,
-    "isAi": false
+    "isAi": false,
+    "isAudio": true
 }

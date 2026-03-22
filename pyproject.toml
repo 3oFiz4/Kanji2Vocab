@@ -8,6 +8,7 @@ dependencies = [
     "aiohttp>=3.13.3",
     "beautifulsoup4>=4.14.3",
     "dotenv>=0.9.9",
+    "elevenlabs>=2.39.0",
     "openai>=2.26.0",
     "pyperclip>=1.11.0",
     "requests>=2.32.5",
