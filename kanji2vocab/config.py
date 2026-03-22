@@ -51,3 +51,5 @@ class ConfigManager:
                 self.logger.log(f"Added '{kanji}' to hasLearned.", "i")
         # Return (possibly) updated config.
         return config
+
+    # def update_past_vocab_learned(self, config: AppConfig, kanji: str) -> AppConfig: # @B

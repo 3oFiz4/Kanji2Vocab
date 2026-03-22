@@ -11,4 +11,11 @@ wheels/
 
 # Virtual environments
 .venv
+
+uv.lock
+pyproject.toml
+auto_instrumentation_setup.py
+list_analyzers.py
+.python-version
+
 >>>>>>> 0ba715b (Revamped into OOP (unfinished))
